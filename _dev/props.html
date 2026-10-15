@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Props (dev)</title>
+<style>html,body{margin:0;height:100%;background:#222;overflow:hidden}canvas{width:100vw;height:100vh;display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script type="module">
+import * as THREE from '../vendor/three.bundle.js';
+import { GameRenderer } from '../js/render.js';
+import { Figurine, POSES } from '../js/figurine.js';
+import { floorMaterial, crowd, banner, letterBlock, crayon } from '../js/props.js';
+import { countryByCode } from '../js/data/countries.js';
+
+const P = new URLSearchParams(location.search);
+await document.fonts.load('40px "Lilita One"').catch(() => {});
+const R = new GameRenderer(document.getElementById('c'), P.get('q') || 'medium');
+R.setLighting({ sunDir: [-0.5, 1, 0.6], sunIntensity: 2.4, hemiIntensity: 0.75, background: 0x3b2f27, exposure: 1.05 });
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), floorMaterial());
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true;
+R.scene.add(floor);
+const spots = [];
+for (let i = 0; i < 10; i++) spots.push({ x: -45 + i * 10, z: -16, size: 10 });
+const C = crowd(R.scene, spots, 3);
+C.update(0.3, +(P.get('level') || 0.6));
+['LU', 'DE', 'FR', 'BE', 'JP', 'BR'].forEach((code, i) => { const b = banner(code, 12, { seed: i + 1 }); b.position.set(-40 + i * 16, 0, -28); R.scene.add(b); });
+['LU', 'DE', 'FR', 'BE'].forEach((code, i) => {
+  const f = new Figurine({ paint: countryByCode(code).paint, seed: i + 3, number: i + 1 });
+  f.setGear('sprint'); f.setPose(i % 2 ? POSES.cheer(0.4) : POSES.stand(0)); f.root.position.set(-15 + i * 10, 0, 4); f.root.rotation.y = 0.2; R.scene.add(f.root);
+});
+const b1 = letterBlock(['A', 'B', 'C', 'D', 'E', 'F'], 6, 2); b1.position.set(30, 3, 6); b1.rotation.y = 0.4; R.scene.add(b1);
+const b2 = letterBlock(['G', 'H', 'I', 'J', 'K', 'L'], 6, 5); b2.position.set(33, 9, 5); b2.rotation.y = -0.2; R.scene.add(b2);
+for (let i = 0; i < 4; i++) { const c = crayon(i); c.position.set(-40 + i * 2.2, 0.45, 8 + i * 0.3); c.rotation.y = 0.3 + i * 0.1; R.scene.add(c); }
+R.orbit(0, 6, -6, { yaw: 0, pitch: +(P.get('pitch') || 0.35), width: +(P.get('w') || 100) });
+R.setFocus(0.42, 0.3, 0.7);
+R.render();
+window.__ready = true;
+</script></body></html>

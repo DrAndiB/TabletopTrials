@@ -1,0 +1,5 @@
+<!doctype html><html><head><meta charset="utf-8"><style>body{margin:10px;background:#ddd;display:flex;flex-wrap:wrap;gap:10px}</style></head><body>
+<script type="module">
+import { flagCanvas } from '../js/flags.js';
+for (const c of new URLSearchParams(location.search).get('c').split(',')) { const k = flagCanvas(c, +(new URLSearchParams(location.search).get('w') || 600)); document.body.appendChild(k); }
+</script></body></html>

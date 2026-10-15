@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Figurine lineup (dev)</title>
+<style>html,body{margin:0;height:100%;background:#222;overflow:hidden}canvas{width:100vw;height:100vh;display:block}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+// Dev preview: a row of figurines in every pose. ?pose=run&t=0.3&q=high&cam=front|side|close
+import * as THREE from '../vendor/three.bundle.js';
+import { GameRenderer } from '../js/render.js';
+import { Figurine, POSES } from '../js/figurine.js';
+import * as TX from '../js/textures.js';
+
+const P = new URLSearchParams(location.search);
+const R = new GameRenderer(document.getElementById('c'), P.get('q') || 'medium');
+R.setLighting({ sunDir: [-0.5, 1, 0.7], sunIntensity: 2.6, hemiIntensity: 0.7, background: 0x3b2f27, exposure: 1.05 });
+const wood = TX.woodTextures({ size: 512, planks: 4, base: 0xb8875a, dark: 0x7a5235, light: 0xd8b085 });
+for (const k of ['map', 'normalMap', 'roughnessMap']) wood[k].repeat.set(3, 3);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ ...wood, roughness: 0.6 }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true;
+R.scene.add(floor);
+
+const paints = [
+  { shirt: '#ED2939', shorts: '#00A1DE', trim: '#FFFFFF' },
+  { shirt: '#FFCE00', shorts: '#000000', trim: '#DD0000' },
+  { shirt: '#002395', shorts: '#FFFFFF', trim: '#ED2939' },
+  { shirt: '#FDDA24', shorts: '#000000', trim: '#EF3340' },
+  { shirt: '#FFFFFF', shorts: '#BC002D', trim: '#BC002D' },
+  { shirt: '#009C3B', shorts: '#FFDF00', trim: '#002776' },
+];
+const t = +(P.get('t') || 0.3);
+const poses = (P.get('pose') || 'stand,run,run2,crouch,tuck,flight,telemark,cheer,wave,heap,walk,bounce').split(',');
+const figs = poses.map((name, i) => {
+  const f = new Figurine({ paint: paints[i % paints.length], seed: i + 1, number: i + 1 });
+  const gear = (name === 'tuck' || name === 'flight' || name === 'telemark') ? 'ski' : (name.startsWith('run') || name === 'crouch' ? 'sprint' : 'none');
+  f.setGear(gear);
+  if (name === 'flight') f.ground = false;
+  let pose;
+  if (name === 'run') pose = POSES.run(t, 1);
+  else if (name === 'run2') pose = POSES.run(t + 0.25, 1);
+  else if (name === 'crouch') pose = POSES.crouch(1);
+  else if (name === 'telemark') { pose = POSES.telemark(1); f.setExpression('wow'); }
+  else if (name === 'heap') { pose = POSES.heap(); f.setExpression('sad'); }
+  else if (name === 'tuck' || name === 'flight') { pose = POSES[name](0.6); f.setExpression('focus'); }
+  else pose = (POSES[name] || POSES.stand)(t);
+  if (name.startsWith('run') || name === 'crouch') f.setExpression('focus');
+  f.setPose(pose);
+  const cols = Math.min(6, poses.length);
+  f.root.position.set(((i % cols) - (cols - 1) / 2) * 11, name === 'flight' ? 3 : 0, Math.floor(i / cols) * -14);
+  const cam = P.get('cam') || 'front';
+  f.root.rotation.y = cam === 'side' ? Math.PI / 2 : (P.get('ry') ? +P.get('ry') : 0.5);
+  R.scene.add(f.root);
+  return f;
+});
+const cam = P.get('cam') || 'front';
+const rows = Math.ceil(poses.length / 6);
+if (cam === 'close') R.look(10, 9, 20, 0, 4.5, 0);
+else R.orbit(0, 4, -(rows - 1) * 7, { yaw: cam === 'side' ? 0 : 0.12, pitch: +(P.get('pitch') || 0.32), width: +(P.get('w') || 75) });
+R.setFocus(0.45, 0.35, 0.6);
+R.render();
+window.__ready = true;
+</script>
+</body>
+</html>
