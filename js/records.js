@@ -18,5 +18,5 @@ export function offerRecord(eventId, rec, better) {
   if (!isBetter) return false;
   all[eventId] = { ...rec, t: Date.now() };
   try { localStorage.setItem(KEY, JSON.stringify(all)); } catch (e) { /* storage unavailable */ }
-  return true;
+  return cur ? 'beat' : 'first';
 }

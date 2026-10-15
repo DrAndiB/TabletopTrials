@@ -84,7 +84,7 @@ function competitorsFromTeams() {
   settings.teams.forEach((t, i) => {
     if (t.type === 'off') return;
     const c = countryByCode(t.code);
-    list.push({ slot: i, type: t.type, code: c.code, name: teamName(i), short: teamName(i), paint: c.paint, seed: teamSeed(i), number: i + 1, color: SEAT_COLORS[i] });
+    list.push({ slot: i, type: t.type, code: c.code, name: teamName(i), short: teamName(i), paint: c.paint, seed: teamSeed(i), number: i + 1, color: SEAT_COLORS[i], flag: flagURL(c.code, 72) });
   });
   return list;
 }
@@ -323,18 +323,18 @@ function rank(def, results) {
 
 game.onEventEnd = ({ def, results }) => {
   const rows = rank(def, results);
-  // medals: top three places (with two competitors, gold and silver only)
-  const nComp = rows.length;
+  // chocolate-coin medals for the top three places (shared places share the medal)
   for (const r of rows) {
-    r.medal = r.place != null && r.place < Math.min(3, Math.max(1, nComp - (nComp > 1 ? 0 : 0))) ? MEDAL[r.place] : null;
-    if (nComp === 2 && r.place === 2) r.medal = null;
+    r.medal = r.place != null && r.place < 3 ? MEDAL[r.place] : null;
     if (r.medal) run.tally[run.competitors[r.i].slot][r.place]++;
   }
   // house record: the best human result, or any result if only computers played
   const best = rows.find((r) => r.place != null && (run.competitors[r.i].type !== 'cpu' || run.competitors.every((c) => c.type === 'cpu')));
   if (best) {
     const c = run.competitors[best.i];
-    best.record = offerRecord(def.id, { value: best.value, text: best.short || best.text, name: c.name, code: c.code }, def.better);
+    const res = offerRecord(def.id, { value: best.value, text: best.short || best.text, name: c.name, code: c.code }, def.better);
+    // the very first result on this device only counts as a record worth a badge when it made the podium
+    best.record = res === 'beat' || (res === 'first' && best.place < 3);
   }
   run.last = { def, rows };
   setTimeout(showResults, (def.resultsDelay ?? 1.6) * 1000);
@@ -379,6 +379,7 @@ function showResults() {
   const trials = run.events.length > 1;
   const mt = $('#medal-table');
   mt.hidden = !trials;
+  $('#screen-results .results-panel').classList.toggle('with-table', trials);
   if (trials) mt.innerHTML = medalTableHtml();
   const last = run.index >= run.events.length - 1;
   $('#btn-next').innerHTML = trials ? (last ? 'Medal ceremony <kbd>Enter</kbd>' : 'Next event <kbd>Enter</kbd>') : 'Again <kbd>Enter</kbd>';
@@ -460,7 +461,7 @@ async function attract() {
   await warmUp();
 }
 function competitorsFromTeamsAll() {
-  return settings.teams.map((t, i) => { const c = countryByCode(t.code); return { slot: i, type: 'cpu', code: c.code, name: c.name, paint: c.paint, seed: teamSeed(i), number: i + 1, color: SEAT_COLORS[i] }; });
+  return settings.teams.map((t, i) => { const c = countryByCode(t.code); return { slot: i, type: 'cpu', code: c.code, name: c.name, short: c.name, paint: c.paint, seed: teamSeed(i), number: i + 1, color: SEAT_COLORS[i], flag: flagURL(c.code, 72) }; });
 }
 
 function togglePause() {

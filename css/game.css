@@ -191,6 +191,20 @@ body[data-screen="none"] #btn-pause { display: grid; }
 .pod-val { font-size: 13px; color: var(--ink-2); font-weight: 700; font-variant-numeric: tabular-nums; }
 .pod-block { width: 100%; display: grid; place-items: center; font-family: var(--display); font-size: 34px; color: #fff; -webkit-text-stroke: 2px var(--ink); paint-order: stroke fill; background: #c49e6c; border: var(--line) solid var(--ink); border-bottom: 0; border-radius: 10px 10px 0 0; margin-top: 4px; box-shadow: inset 0 -10px 0 rgba(0,0,0,.12); background-image: repeating-linear-gradient(0deg, rgba(0,0,0,.05) 0 2px, transparent 2px 6px); }
 .pod-1 .pod-block { height: 96px; } .pod-2 .pod-block { height: 68px; } .pod-3 .pod-block { height: 48px; }
+/* The Trials: results and the running medal table side by side when there is room */
+@media (min-width: 900px) {
+  .results-panel.with-table { width: min(1000px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) 340px; column-gap: 22px; grid-template-areas: "kick kick" "title title" "pod table" "list table" "btns btns"; align-items: start; }
+  .results-panel.with-table > .kicker { grid-area: kick; }
+  .results-panel.with-table > h2 { grid-area: title; }
+  .results-panel.with-table > .podium { grid-area: pod; }
+  .results-panel.with-table > .results-list { grid-area: list; }
+  .results-panel.with-table > .medal-table { grid-area: table; align-self: center; }
+  .results-panel.with-table > .stack { grid-area: btns; }
+}
+@media (max-height: 760px) {
+  .pod-block { font-size: 26px; }
+  .pod-1 .pod-block { height: 72px; } .pod-2 .pod-block { height: 52px; } .pod-3 .pod-block { height: 38px; }
+}
 /* chocolate coin medal: foil disc with an embossed ring */
 .coin { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-family: var(--display); font-size: 17px; color: rgba(0,0,0,.55); border: 2.5px solid var(--ink); background: radial-gradient(circle at 35% 30%, #fff8 0 12%, transparent 13%), radial-gradient(circle, var(--m1) 0 55%, var(--m2) 56% 62%, var(--m1) 63%); box-shadow: 0 3px 0 var(--ink); position: relative; animation: coin 2.2s ease-in-out infinite alternate; }
 .coin::before { content: ""; position: absolute; left: 50%; top: -12px; width: 12px; height: 14px; transform: translateX(-50%); background: var(--rib, #e23b2e); border: 2px solid var(--ink); border-bottom: 0; border-radius: 2px 2px 0 0; z-index: -1; }
