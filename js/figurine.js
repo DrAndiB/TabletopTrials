@@ -413,7 +413,7 @@ export const POSES = {
     return {
       ...REST,
       y: -1.3, lean: 1.05, head: -0.5, roll: wobble * 0.35,
-      hipL: 1.35, hipR: 1.35, kneeL: 1.95, kneeR: 1.95, ankL: 0.25, ankR: 0.25,
+      hipL: 1.35, hipR: 1.35, kneeL: 1.95, kneeR: 1.95, ankL: 0, ankR: 0,
       shL: -0.35, shR: -0.35, elL: 0.2, elR: 0.2, abL: 0.06, abR: 0.06,
       spL: 0.04, spR: 0.04,
     };

@@ -16,6 +16,14 @@ const ACCEL = 1.75, DECEL = 1.1;
 const TRACK_X0 = -40, TRACK_X1 = 360, TRACK_Z = 28;
 const ORD = ['1st', '2nd', '3rd', '4th'];
 const FS_CHANCE = { easy: 0.03, normal: 0.01, hard: 0.005 };
+// the race has three parts: the drive out of the blocks (a calmer rhythm: spinning your legs too fast
+// gets you nowhere), top speed, and the last stretch where tired legs need a steady, slightly faster beat
+const DRIVE_X = 90, FATIGUE_X = 240;
+const DRIVE_TARGET = 0.8, FATIGUE_TARGET = 1.06;
+// computer kids: how well they pace the drive (1 = perfectly) and the finish
+const BOT_PACE = { easy: { cad: 0.8, drive: 0.25, fatigue: 0.2 }, normal: { cad: 0.93, drive: 0.6, fatigue: 0.6 }, hard: { cad: 0.975, drive: 0.9, fatigue: 0.9 } };
+// a good push out of the blocks: speed given for a reaction time
+const blockBoost = (reaction) => VMAX * 0.34 * clamp(1 - (reaction - 0.12) / 0.38, 0, 1);
 
 const laneZ = (lane) => (1.5 - lane) * LANE;
 
@@ -66,9 +74,9 @@ class Sprint {
       const run = {
         c, fig, lane, z, x: -6, v: 0, rhythm: new Rhythm({ target: TARGET }),
         started: false, tGo: null, reaction: null, finished: false, tFinish: null, time: null,
-        anim: 0, effort: 0, effortAnim: 0, runW: 0, stumbleT: 0, cards: 0, heldBack: false,
+        anim: 0, effort: 0, effortAnim: 0, runW: 0, stumbleT: 0, cards: 0, heldBack: false, block: false, slipT: 0, zone: 'drive',
         bot: c.human ? null : new BotTapper(c.pad, rng(c.seed * 31 + 7)),
-        botCad: TARGET * this.ctx.skill.cadence * (0.97 + this.r() * 0.06),
+        botCad: TARGET * (BOT_PACE[this.ctx.skillName] || BOT_PACE.normal).cad * (0.97 + this.r() * 0.06),
         pose: POSES.stand(0), idle: this.r() * 10, place: null, beat: 0,
       };
       this.runners.push(run);
@@ -379,7 +387,8 @@ class Sprint {
       .rm .b i{position:absolute;inset:0 auto 0 0;width:0;background:#ef7d2c;border-radius:99px;transition:background .2s}
       .rm .b u{position:absolute;top:-2px;bottom:-2px;width:3px;background:#1f1a17;left:96.2%}
       .rm .n{position:absolute;right:8px;top:4px;font-size:15px;opacity:0;transition:opacity .05s}.rm .n.on{opacity:1}
-      .rm.go .b i{background:#2fae5a}.rm.ok .b i{background:#f2c230}`;
+      .rm.go .b i{background:#2fae5a}.rm.ok .b i{background:#f2c230}.rm.fast .b i{background:#e23b2e}
+      .rm .z{display:flex;gap:3px;margin-top:4px}.rm .z span{flex:1;height:4px;border-radius:2px;background:#e6dccb}.rm .z span.on{background:#1f1a17}`;
     el.appendChild(style);
     this.meters = [];
     const humans = this.runners.filter((ru) => ru.c.human);
@@ -387,10 +396,10 @@ class Sprint {
       const d = document.createElement('div');
       d.className = 'rm';
       d.style.bottom = `${(ru.c.type === 'touch' ? 120 : 12) + k * 58}px`;
-      const keys = ru.c.type === 'touch' ? '◀ ▶ in turn' : 'left, right, left, right…';
-      d.innerHTML = `<div class="h"><img src="${ru.c.flag}" alt=""><span>${ru.c.short}</span><span class="k">${keys}</span></div><div class="b"><i></i><u></u></div><span class="n">♪</span>`;
+      const keys = '';
+      d.innerHTML = `<div class="h"><img src="${ru.c.flag}" alt=""><span>${ru.c.short}</span><span class="k">${keys}</span></div><div class="b"><i></i><u></u></div><div class="z"><span></span><span></span><span></span></div><span class="n">♪</span>`;
       el.appendChild(d);
-      this.meters.push({ ru, d, bar: d.querySelector('.b i'), note: d.querySelector('.n'), k: '' });
+      this.meters.push({ ru, d, bar: d.querySelector('.b i'), note: d.querySelector('.n'), tip: d.querySelector('.k'), zones: d.querySelectorAll('.z span'), k: '', tipText: '' });
     });
   }
 
@@ -423,6 +432,7 @@ class Sprint {
       for (let i = 0; i < this.runners.length; i++) ctx.presses(i);
       if (this.t > 1.3) {
         this.phase = 'set'; this.t = 0;
+        this.runners.forEach((ru, i) => { ru.block = ru.c.human && ctx.held(i).action; });
         this.setMessage('Set', 'small', '#ffc93c'); ctx.sound.block(true);
         this.whistleIn = 1.2 + this.r() * 1.0;
         // computer kids very rarely jump the gun
@@ -435,7 +445,10 @@ class Sprint {
         const ru = this.runners[i];
         if (ru.cpuJump != null && this.t >= ru.cpuJump) { ru.cpuJump = null; ru.c.pad.push('left', true, now); ru.c.pad.push('left', false, now + 0.03); }
         const q = ctx.presses(i);
-        if (q.some((e) => e.down) && !ru.heldBack) { this.falseStart(ru); if (this.phase !== 'set') return; }
+        // holding ACTION in the blocks is fine; letting go of it, or a step, before the whistle is not
+        for (const e of q) if (e.b === 'action' && e.down) ru.block = true;
+        const jumped = q.some((e) => (e.down && e.b !== 'action') || (!e.down && e.b === 'action' && ru.block));
+        if (jumped && !ru.heldBack) { this.falseStart(ru); if (this.phase !== 'set') return; }
       }
       if (this.t >= this.whistleIn) this.go(now);
     } else if (P === 'false') {
@@ -467,7 +480,7 @@ class Sprint {
     this.setMessage(`False start: ${ru.c.short}`, 'small', '#ff8a65');
     ctx.sound.whistle(0.18); setTimeout(() => ctx.sound.whistle(0.18), 220);
     ctx.sound.aww();
-    for (const r2 of this.runners) { r2.c.pad.clear?.(); r2.cpuJump = null; }
+    for (const r2 of this.runners) { r2.c.pad.clear?.(); r2.cpuJump = null; r2.block = false; }
   }
 
   go(now) {
@@ -480,7 +493,8 @@ class Sprint {
       ru.tGo = now + (ru.heldBack ? 0.5 : 0);
       if (ru.bot) {
         const [a, b] = ctx.skill.react;
-        ru.bot.start(ru.tGo + a + this.r() * (b - a));
+        ru.botGo = ru.tGo + a + this.r() * (b - a);
+        ru.bot.start(ru.botGo);
       }
     }
     this.history = [];
@@ -491,13 +505,30 @@ class Sprint {
     let leader = null;
     for (let i = 0; i < this.runners.length; i++) {
       const ru = this.runners[i];
-      if (ru.bot && !ru.finished) ru.bot.update(now, ru.botCad, ctx.skill.jitter, ctx.skill.stumble);
+      // which part of the race this runner is in
+      ru.zone = ru.x < DRIVE_X ? 'drive' : ru.x < FATIGUE_X ? 'top' : 'tired';
+      ru.rhythm.target = TARGET * (ru.zone === 'drive' ? DRIVE_TARGET : ru.zone === 'tired' ? FATIGUE_TARGET : 1);
+      if (ru.bot && !ru.finished) {
+        const pace = BOT_PACE[ctx.skillName] || BOT_PACE.normal;
+        const f = ru.zone === 'drive' ? 1 + (DRIVE_TARGET - 1) * pace.drive : ru.zone === 'tired' ? 1 + (FATIGUE_TARGET - 1) * pace.fatigue : 1;
+        ru.bot.update(now, ru.botCad * f, ctx.skill.jitter, ctx.skill.stumble);
+        if (!ru.started && ru.botGo != null && now >= ru.botGo) { ru.started = true; ru.reaction = ru.botGo - this.whistleAt; ru.startT = ru.botGo; ru.v = blockBoost(ru.reaction); }
+      }
       for (const e of ctx.presses(i)) {
-        if (!e.down || e.b === 'action') continue;
         if (e.t < ru.tGo) continue; // held back runners wait their half second
+        // letting go of ACTION in the blocks is the push-off
+        if (e.b === 'action') {
+          if (!e.down && ru.block && !ru.started) {
+            ru.started = true; ru.reaction = e.t - this.whistleAt; ru.startT = e.t; ru.v = blockBoost(ru.reaction);
+            ctx.sound.step(1, this.pan(ru.x));
+            if (ru.c.human && ru.reaction < 0.2) ctx.hud.flash(`${ru.c.short}: flying start!`, '#7be495');
+          }
+          continue;
+        }
+        if (!e.down) continue;
         if (ru.finished && ru.v < 4) continue;
         const res = ru.rhythm.press(e.b, e.t);
-        if (!ru.started) { ru.started = true; ru.reaction = e.t - this.whistleAt; ru.startT = e.t; }
+        if (!ru.started) { ru.started = true; ru.reaction = e.t - this.whistleAt; ru.startT = e.t; ru.block = false; }
         if (res === 'stumble') {
           ru.v *= 0.85; ru.stumbleT = 0.35;
           ctx.sound.stumble(this.pan(ru.x));
@@ -508,7 +539,19 @@ class Sprint {
         }
       }
       // speed
-      const eff = ru.started ? ru.rhythm.effort(now) : 0;
+      let eff = ru.started ? ru.rhythm.effort(now) : 0;
+      if (ru.started && !ru.finished) {
+        const x = ru.rhythm.cadence(now) / ru.rhythm.target;
+        // the drive: legs spinning too fast slip on the floorboards
+        if (ru.zone === 'drive' && x > 1.15) {
+          eff *= Math.max(0.72, 1 - (x - 1.15) * 0.7);
+          if (x > 1.3 && ru.slipT <= 0) { ru.slipT = 0.6; ru.v *= 0.93; ru.stumbleT = 0.25; ctx.sound.stumble(this.pan(ru.x)); }
+        }
+        // tired legs: an uneven beat costs more
+        if (ru.zone === 'tired') eff *= 1 - clamp((ru.rhythm.unsteadiness() - 0.26) * 0.8, 0, 0.18);
+        ru.over = x;
+      }
+      if (ru.slipT > 0) ru.slipT -= dt;
       ru.effort = eff;
       const target = ru.finished ? 0 : VMAX * eff;
       const k = target > ru.v ? ACCEL : (ru.finished ? 1.4 : DECEL);
@@ -696,8 +739,18 @@ class Sprint {
     for (const m of this.meters) {
       const e = m.ru.started && !m.ru.finished ? clamp(m.ru.effort / 1.04, 0, 1) : 0;
       m.bar.style.width = `${(e * 100).toFixed(1)}%`;
-      const k = e >= 0.92 ? 'rm go' : e >= 0.7 ? 'rm ok' : 'rm';
+      const ru = m.ru, fast = ru.started && ru.zone === 'drive' && ru.over > 1.15;
+      const k = fast ? 'rm fast' : e >= 0.92 ? 'rm go' : e >= 0.7 ? 'rm ok' : 'rm';
       if (k !== m.k) { m.d.className = k; m.k = k; }
+      const touch = ru.c.type === 'touch';
+      const ph = this.phase;
+      const tip = ph === 'walk' || ph === 'marks' || ph === 'false' ? `hold ${touch ? '●' : 'action'} in the blocks`
+        : ph === 'set' ? (ru.block ? 'let go on GO!' : `hold ${touch ? '●' : 'action'}!`)
+          : !ru.started ? (ru.block ? 'let go!' : `${touch ? '◀ ▶' : 'left, right'}…`)
+            : ru.finished ? '' : ru.zone === 'drive' ? (fast ? 'easy! smooth steps' : 'drive: smooth steps') : ru.zone === 'top' ? 'top speed: keep the beat' : 'dig in: a bit faster!';
+      if (tip !== m.tipText) { m.tip.textContent = tip; m.tipText = tip; }
+      const zi = ru.zone === 'drive' ? 0 : ru.zone === 'top' ? 1 : 2;
+      m.zones.forEach((z, n) => z.classList.toggle('on', ru.started && n <= zi));
       m.note.classList.toggle('on', m.ru.beat > 0);
       m.d.style.opacity = this.phase === 'attract' || this.phase === 'done' || this.phase === 'replay' ? '0' : '1';
     }
@@ -776,8 +829,8 @@ export default {
   venue: 'Four lanes chalked across the playroom floorboards, finishing at a red wool tape.',
   loading: 'Chalking the lanes…',
   how: [
-    { verb: 'Timing', text: 'Wait for the <b>whistle</b>, then go. Moving after <b>Set</b> is a false start.' },
-    { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to run. A steady, quick beat is fastest: mashing faster won\'t help.' },
+    { verb: 'Timing', text: 'In the blocks, hold <b>action</b>. Let go the moment the <b>whistle</b> blows for a flying start: letting go after <b>Set</b> is a false start.' },
+    { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to run. Out of the blocks, smooth steps: legs spinning too fast slip. Then a steady, quick beat, and dig in a little faster for the last stretch.' },
   ],
   better: 'lower',
   resultsDelay: 0.9,
