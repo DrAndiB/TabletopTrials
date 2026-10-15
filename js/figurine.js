@@ -42,6 +42,7 @@ function geos() {
     hairBob: new THREE.SphereGeometry(HEAD_R * 1.1, 28, 16, 0, TAU, 0, 1.75),
     bead: new THREE.SphereGeometry(0.42, 16, 12),
     neck: new THREE.CylinderGeometry(0.36, 0.42, 0.4, 16),
+    belt: new THREE.CylinderGeometry(0.97, 0.92, 0.16, 28, 1, true),
     upper: capsule(0.31, UPPER),
     fore: capsule(0.27, FORE),
     hand: new THREE.SphereGeometry(0.36, 16, 12),
@@ -135,48 +136,17 @@ function faceTexture(kind) {
   return faceTex[kind];
 }
 
-let woodTex = null;
-function woodGrain() {
-  if (woodTex) return woodTex;
-  const c = makeCanvas(128), g = c.getContext('2d');
-  g.fillStyle = '#e6c99c'; g.fillRect(0, 0, 128, 128);
-  const r = rng(91);
-  for (let i = 0; i < 26; i++) {
-    g.strokeStyle = `rgba(${150 + r() * 30},${100 + r() * 20},${55 + r() * 15},${0.16 + r() * 0.2})`;
-    g.lineWidth = 1 + r() * 2.5;
-    const y = r() * 128;
-    g.beginPath(); g.moveTo(0, y);
-    for (let x = 0; x <= 128; x += 16) g.lineTo(x, y + Math.sin(x * 0.05 + i) * 3 + (r() - 0.5) * 2);
-    g.stroke();
-  }
-  woodTex = toTexture(c, { repeat: [1, 2] });
-  return woodTex;
-}
-
+// one material for every figurine: colours come from the vertices (one draw call per figurine)
 const shared = {};
 function sharedMats() {
-  if (shared.wood) return shared;
-  shared.wood = new THREE.MeshPhysicalMaterial({ color: 0xf0d6aa, map: woodGrain(), roughness: 0.62, clearcoat: 0.25, clearcoatRoughness: 0.5 });
-  shared.shoe = new THREE.MeshPhysicalMaterial({ color: 0xf6f2ea, roughness: 0.5, clearcoat: 0.5, clearcoatRoughness: 0.3 });
-  shared.sole = new THREE.MeshPhysicalMaterial({ color: 0x2b2420, roughness: 0.6, clearcoat: 0.3 });
-  shared.lens = new THREE.MeshPhysicalMaterial({ color: 0xffa83a, roughness: 0.08, metalness: 0.2, clearcoat: 1, clearcoatRoughness: 0.04, emissive: 0x3a1800, emissiveIntensity: 0.4 });
-  shared.ski = new THREE.MeshPhysicalMaterial({ color: 0xf0d3a2, map: woodGrain(), roughness: 0.55, clearcoat: 0.35 });
+  if (shared.body) return shared;
+  shared.body = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.44, metalness: 0, clearcoat: 0.55, clearcoatRoughness: 0.24 });
   for (const k of ['happy', 'focus', 'wow', 'sad']) {
     shared['face_' + k] = new THREE.MeshStandardMaterial({ map: faceTexture(k), transparent: true, alphaTest: 0.02, roughness: 0.5, polygonOffset: true, polygonOffsetFactor: -2 });
   }
   return shared;
 }
-
-function paintMat(color, extra = {}) {
-  return new THREE.MeshPhysicalMaterial({ color, roughness: 0.42, metalness: 0, clearcoat: 0.6, clearcoatRoughness: 0.22, ...extra });
-}
-
-// readable ink (dark or light) on top of a paint colour
-function inkFor(hex) {
-  const c = new THREE.Color(hex);
-  const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
-  return l > 0.45 ? '#1f1a17' : '#ffffff';
-}
+const WOOD = '#e2c497', SHOE = '#f6f2ea', SOLE_C = '#2b2420', LENS = '#ff9a2a', SKI = '#ecd09f', STRAP = '#2b2420';
 
 function bibTexture(number, border) {
   const c = makeCanvas(128, 104), g = c.getContext('2d');
@@ -190,140 +160,151 @@ function bibTexture(number, border) {
   return toTexture(c, { wrap: false });
 }
 
+// bones, in the order of the skin indices
+const BONES = ['hips', 'spine', 'head', 'skull', 'shL', 'elL', 'shR', 'elR', 'hipL', 'kneeL', 'ankL', 'hipR', 'kneeR', 'ankR'];
+const B = Object.fromEntries(BONES.map((n, i) => [n, i]));
+
 // ---------- the figurine ----------
 export class Figurine {
   // paint: {shirt, shorts, trim} colours; seed picks skin tone, hair and style (or pass skin/hair/style)
   constructor({ paint = { shirt: '#e23b2e', shorts: '#1f1a17', trim: '#ffffff' }, seed = 1, number = null, skin, hair, style } = {}) {
-    const g = geos(), S = sharedMats();
+    const S = sharedMats();
     const r = rng(seed * 7919 + 13);
     this.skinColor = skin || r.pick(SKIN_TONES);
     this.hairColor = hair || r.pick(HAIR_COLORS);
     this.style = style || r.pick(HAIR_STYLES);
     this.paint = paint;
-    const M = this.mats = {
-      shirt: paintMat(paint.shirt),
-      shorts: paintMat(paint.shorts),
-      trim: paintMat(paint.trim),
-      skin: paintMat(this.skinColor, { roughness: 0.5, clearcoat: 0.35 }),
-      hair: paintMat(this.hairColor, { roughness: 0.55, clearcoat: 0.3 }),
-    };
-    const mesh = (geo, mat, parent, x = 0, y = 0, z = 0) => {
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set(x, y, z);
-      m.castShadow = true; m.receiveShadow = true;
-      parent.add(m);
-      return m;
-    };
+    this.curlR = Array.from({ length: 9 }, () => r());
 
-    this.root = new THREE.Group();        // placed by the event (feet reference, facing)
-    this.body = new THREE.Group();        // grounding offset
+    this.root = new THREE.Group();   // placed by the event (feet reference, facing)
+    this.body = new THREE.Group();   // grounding offset and whole-body pitch
     this.root.add(this.body);
-    const hips = this.hips = new THREE.Group();
-    hips.position.y = HIP_Y;
-    this.body.add(hips);
-    mesh(g.pelvis, M.shorts, hips);
+    // skeleton
+    const bones = this.bones = BONES.map((n) => { const b = new THREE.Bone(); b.name = n; return b; });
+    const at = (name, parent, x, y, z) => { bones[B[name]].position.set(x, y, z); (parent ? bones[B[parent]] : this.body).add(bones[B[name]]); };
+    at('hips', null, 0, HIP_Y, 0);
+    at('spine', 'hips', 0, 0.1, 0);
+    at('head', 'spine', 0, NECK + 0.1, 0);
+    at('skull', 'head', 0, HEAD_R * 0.92, 0);
+    at('shL', 'spine', SH_X, SH_Y, 0); at('elL', 'shL', 0, -UPPER, 0);
+    at('shR', 'spine', -SH_X, SH_Y, 0); at('elR', 'shR', 0, -UPPER, 0);
+    at('hipL', 'hips', HIP_X, -HIP_DROP, 0); at('kneeL', 'hipL', 0, -THIGH, 0); at('ankL', 'kneeL', 0, -SHIN, 0);
+    at('hipR', 'hips', -HIP_X, -HIP_DROP, 0); at('kneeR', 'hipR', 0, -THIGH, 0); at('ankR', 'kneeR', 0, -SHIN, 0);
+    this.root.updateMatrixWorld(true);
+    this.bind = bones.map((b) => b.matrixWorld.clone());
+    this.skeleton = new THREE.Skeleton(bones);
+    this.hips = bones[B.hips]; this.spine = bones[B.spine]; this.head = bones[B.head]; this.skull = bones[B.skull];
+    this.arms = [{ sh: bones[B.shL], el: bones[B.elL] }, { sh: bones[B.shR], el: bones[B.elR] }];
+    this.legs = [{ hip: bones[B.hipL], knee: bones[B.kneeL], ank: bones[B.ankL] }, { hip: bones[B.hipR], knee: bones[B.kneeR], ank: bones[B.ankR] }];
 
-    const spine = this.spine = new THREE.Group();
-    spine.position.y = 0.1;
-    hips.add(spine);
-    this.torso = mesh(g.torso, M.shirt, spine);
-    // painted waistband stripe in the trim colour
-    const belt = mesh(new THREE.CylinderGeometry(0.95, 0.9, 0.16, 28, 1, true), M.trim, spine, 0, 0.12, 0);
-    belt.castShadow = false;
-    mesh(g.neck, M.skin, spine, 0, NECK - 0.02, 0);
-
-    const head = this.head = new THREE.Group();
-    head.position.y = NECK + 0.1;
-    spine.add(head);
-    const skull = new THREE.Group();
-    skull.position.y = HEAD_R * 0.92;
-    head.add(skull);
-    this.skull = skull;
-    mesh(g.head, M.skin, skull);
-    this.face = mesh(g.face, S.face_happy, skull);
-    this.face.castShadow = false;
-    this.buildHair(skull, r);
-
+    this.face = new THREE.Mesh(geos().face, S.face_happy);
+    this.skull.add(this.face);
     this.bib = null;
     if (number != null) this.setNumber(number);
 
-    // arms
-    this.arms = [1, -1].map((side) => {
-      const sh = new THREE.Group();
-      sh.position.set(side * SH_X, SH_Y, 0);
-      spine.add(sh);
-      mesh(g.bead, M.shirt, sh).scale.setScalar(0.92);
-      mesh(g.upper, M.shirt, sh);
-      const el = new THREE.Group();
-      el.position.y = -UPPER;
-      sh.add(el);
-      mesh(g.fore, M.skin, el);
-      mesh(g.hand, M.skin, el, 0, -FORE - 0.05, 0);
-      return { sh, el, side };
-    });
-
-    // legs
-    this.legs = [1, -1].map((side) => {
-      const hip = new THREE.Group();
-      hip.position.set(side * HIP_X, -HIP_DROP, 0);
-      hips.add(hip);
-      mesh(g.thigh, M.shorts, hip).scale.set(1, 0.42, 1);
-      const thighSkin = mesh(g.thigh, M.skin, hip, 0, -THIGH * 0.42, 0);
-      thighSkin.scale.set(0.93, 0.58, 0.93);
-      const knee = new THREE.Group();
-      knee.position.y = -THIGH;
-      hip.add(knee);
-      mesh(g.bead, S.wood, knee).scale.setScalar(0.92);
-      mesh(g.shin, M.skin, knee);
-      const sock = mesh(g.sock, M.trim, knee, 0, -SHIN + 0.35, 0);
-      sock.castShadow = false;
-      const ank = new THREE.Group();
-      ank.position.y = -SHIN;
-      knee.add(ank);
-      const shoe = mesh(g.foot, S.shoe, ank);
-      const sole = mesh(g.foot, S.sole, ank, 0, -0.06, 0);
-      sole.scale.set(1.02, 0.25, 1.02);
-      return { hip, knee, ank, side, shoe };
-    });
-
-    this.gear = 'none';
-    this.gearObjs = [];
+    this.gear = null;
+    this.mesh = null;
+    this.setGear('none');
     this.pose = { ...REST };
     this.ground = true;
     this.expression = 'happy';
     this.setPose(REST);
   }
 
-  buildHair(skull, r) {
-    const g = geos(), M = this.mats;
-    const hair = this.hair = new THREE.Group();
-    skull.add(hair);
-    const add = (geo, x, y, z, s = 1) => { const m = new THREE.Mesh(geo, M.hair); m.position.set(x, y, z); m.scale.setScalar(s); m.castShadow = true; hair.add(m); return m; };
-    const style = this.style;
-    if (style === 'bob') {
-      const cap = add(g.hairBob, 0, 0.05, -0.06);
-      cap.rotation.x = -0.42;
-    } else {
-      const cap = add(g.hairCap, 0, 0.02, -0.05);
-      cap.rotation.x = -0.32;
+  // parts of the body in bind pose: [geometry, colour, bone, position, rotation, scale]
+  parts() {
+    const g = geos(), P = this.paint, sk = this.skinColor, hc = this.hairColor;
+    const list = [
+      [g.pelvis, P.shorts, 'hips'],
+      [g.torso, P.shirt, 'spine'],
+      [g.belt, P.trim, 'spine', [0, 0.12, 0]],
+      [g.neck, sk, 'spine', [0, NECK - 0.02, 0]],
+      [g.head, sk, 'skull'],
+    ];
+    for (const s of ['L', 'R']) {
+      list.push([g.bead, P.shirt, 'sh' + s, null, null, 0.92], [g.upper, P.shirt, 'sh' + s], [g.fore, sk, 'el' + s], [g.hand, sk, 'el' + s, [0, -FORE - 0.05, 0]]);
+      list.push([g.thigh, P.shorts, 'hip' + s, null, null, [1, 0.42, 1]], [g.thigh, sk, 'hip' + s, [0, -THIGH * 0.42, 0], null, [0.93, 0.58, 0.93]]);
+      list.push([g.bead, WOOD, 'knee' + s, null, null, 0.92], [g.shin, sk, 'knee' + s], [g.sock, P.trim, 'knee' + s, [0, -SHIN + 0.35, 0]]);
+      list.push([g.foot, SHOE, 'ank' + s], [g.foot, SOLE_C, 'ank' + s, [0, -0.06, 0], null, [1.02, 0.25, 1.02]]);
     }
-    if (style === 'pony') {
-      const p = add(g.ponytail, 0, 0.35, -1.45);
-      p.rotation.x = -0.75;
-    } else if (style === 'buns') {
-      add(g.bun, 0.95, 0.85, -0.25); add(g.bun, -0.95, 0.85, -0.25);
-    } else if (style === 'curly') {
-      for (let i = 0; i < 9; i++) {
-        const a = (i / 9) * TAU;
-        add(g.curl, Math.cos(a) * 0.95, 0.75 + Math.sin(i * 1.7) * 0.15, Math.sin(a) * 0.95 - 0.15, 0.95 + r() * 0.25);
+    // hair (hidden under a ski helmet)
+    if (this.gear !== 'ski') {
+      const st = this.style;
+      if (st === 'bob') list.push([g.hairBob, hc, 'skull', [0, 0.05, -0.06], [-0.42, 0, 0]]);
+      else list.push([g.hairCap, hc, 'skull', [0, 0.02, -0.05], [-0.32, 0, 0]]);
+      if (st === 'pony') list.push([g.ponytail, hc, 'skull', [0, 0.35, -1.45], [-0.75, 0, 0]]);
+      else if (st === 'buns') list.push([g.bun, hc, 'skull', [0.95, 0.85, -0.25]], [g.bun, hc, 'skull', [-0.95, 0.85, -0.25]]);
+      else if (st === 'curly') {
+        for (let i = 0; i < 9; i++) {
+          const a = (i / 9) * TAU;
+          list.push([g.curl, hc, 'skull', [Math.cos(a) * 0.95, 0.75 + Math.sin(i * 1.7) * 0.15, Math.sin(a) * 0.95 - 0.15], null, 0.95 + this.curlR[i] * 0.25]);
+        }
       }
     }
+    if (this.gear === 'sprint') {
+      list.push([g.band, P.trim, 'skull', [0, 0.42, -0.05], [Math.PI / 2 - 0.22, 0, 0]]);
+    } else if (this.gear === 'ski') {
+      list.push([g.helmet, P.shirt, 'skull', [0, 0.05, -0.04], [-0.28, 0, 0]]);
+      list.push([g.goggle, STRAP, 'skull', [0, 0.35, 0], [Math.PI / 2 - 0.08, 0, Math.PI / 2 - 0.85 + Math.PI]]);
+      list.push([g.lens, LENS, 'skull', [0, 0.42, HEAD_R * 1.02], [-0.12, 0, 0]]);
+      list.push([g.ski, SKI, 'ankL'], [g.ski, SKI, 'ankR']);
+    }
+    return list;
+  }
+
+  // (re)build the skinned body for the current gear
+  buildMesh() {
+    if (this.mesh) { this.body.remove(this.mesh); this.mesh.geometry.dispose(); }
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), pos = new THREE.Vector3(), sc = new THREE.Vector3();
+    const geos = this.parts().map(([geo, color, bone, p, rot, s]) => {
+      const gg = geo.index ? geo.toNonIndexed() : geo.clone();
+      pos.set(...(p || [0, 0, 0]));
+      q.setFromEuler(e.set(...(rot || [0, 0, 0])));
+      if (Array.isArray(s)) sc.set(...s); else sc.setScalar(s ?? 1);
+      m4.compose(pos, q, sc).premultiply(this.bind[B[bone]]);
+      gg.applyMatrix4(m4);
+      gg.userData = { color, bone: B[bone] };
+      return gg;
+    });
+    let n = 0;
+    for (const gg of geos) n += gg.attributes.position.count;
+    const P = new Float32Array(n * 3), N = new Float32Array(n * 3), C = new Float32Array(n * 3);
+    const SI = new Uint16Array(n * 4), SW = new Float32Array(n * 4);
+    const col = new THREE.Color();
+    let o = 0;
+    for (const gg of geos) {
+      const k = gg.attributes.position.count;
+      P.set(gg.attributes.position.array, o * 3);
+      N.set(gg.attributes.normal.array, o * 3);
+      col.set(gg.userData.color);
+      for (let i = 0; i < k; i++) {
+        C[(o + i) * 3] = col.r; C[(o + i) * 3 + 1] = col.g; C[(o + i) * 3 + 2] = col.b;
+        SI[(o + i) * 4] = gg.userData.bone; SW[(o + i) * 4] = 1;
+      }
+      o += k;
+      gg.dispose();
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(C, 3));
+    geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(SI, 4));
+    geo.setAttribute('skinWeight', new THREE.BufferAttribute(SW, 4));
+    const mesh = new THREE.SkinnedMesh(geo, sharedMats().body);
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
+    this.body.add(mesh);
+    // geometry is already in the body's space: bind with an identity bind matrix
+    mesh.bind(this.skeleton, new THREE.Matrix4());
+    this.mesh = mesh;
   }
 
   setNumber(n) {
     const g = geos();
     if (this.bib) { this.bib.material.map.dispose(); this.bib.material.dispose(); this.spine.remove(this.bib); }
-    const mat = new THREE.MeshStandardMaterial({ map: bibTexture(n, this.paint.trim === '#ffffff' || this.paint.trim === '#FFFFFF' ? this.paint.shorts : this.paint.trim), roughness: 0.75, polygonOffset: true, polygonOffsetFactor: -2 });
+    const light = (c) => { const k = new THREE.Color(c); return 0.2126 * k.r + 0.7152 * k.g + 0.0722 * k.b > 0.8; };
+    const border = light(this.paint.trim) ? (light(this.paint.shorts) ? this.paint.shirt : this.paint.shorts) : this.paint.trim;
+    const mat = new THREE.MeshStandardMaterial({ map: bibTexture(n, border), roughness: 0.75, polygonOffset: true, polygonOffsetFactor: -2 });
     const m = new THREE.Mesh(g.bib, mat);
     m.position.set(0, 1.05, 1.025);
     m.rotation.x = -0.03;
@@ -340,36 +321,8 @@ export class Figurine {
   // 'none' | 'sprint' (headband) | 'ski' (helmet, goggles, craft-stick skis)
   setGear(kind) {
     if (kind === this.gear) return;
-    for (const o of this.gearObjs) o.parent.remove(o);
-    this.gearObjs = [];
     this.gear = kind;
-    const g = geos(), S = sharedMats(), M = this.mats;
-    const keep = (o) => { o.castShadow = true; this.gearObjs.push(o); return o; };
-    this.hair.visible = true;
-    if (kind === 'sprint') {
-      const b = keep(new THREE.Mesh(g.band, M.trim));
-      b.rotation.x = Math.PI / 2 - 0.22;
-      b.position.set(0, 0.42, -0.05);
-      this.skull.add(b);
-    } else if (kind === 'ski') {
-      this.hair.visible = false;
-      const h = keep(new THREE.Mesh(g.helmet, M.shirt));
-      h.rotation.x = -0.28; h.position.set(0, 0.05, -0.04);
-      this.skull.add(h);
-      const strap = keep(new THREE.Mesh(g.goggle, S.sole));
-      strap.rotation.set(Math.PI / 2 - 0.08, 0, Math.PI / 2 - 0.85 + Math.PI);
-      strap.position.y = 0.35;
-      this.skull.add(strap);
-      const lens = keep(new THREE.Mesh(g.lens, S.lens));
-      lens.position.set(0, 0.42, HEAD_R * 1.02);
-      lens.rotation.x = -0.12;
-      this.skull.add(lens);
-      for (const L of this.legs) {
-        const s = keep(new THREE.Mesh(g.ski, S.ski));
-        s.receiveShadow = true;
-        L.ank.add(s);
-      }
-    }
+    this.buildMesh();
   }
 
   // apply a pose (missing keys keep REST values)
@@ -384,9 +337,8 @@ export class Figurine {
     aL.sh.rotation.set(-P.shL, 0, P.abL); aL.el.rotation.set(-P.elL, 0, 0);
     aR.sh.rotation.set(-P.shR, 0, -P.abR); aR.el.rotation.set(-P.elR, 0, 0);
     const [lL, lR] = this.legs;
-    lL.hip.rotation.set(-P.hipL, 0, P.spL); lL.knee.rotation.set(P.kneeL, 0, 0); lL.ank.rotation.set(-P.ankL + P.hipL - P.kneeL, 0, -P.spL);
-    lR.hip.rotation.set(-P.hipR, 0, -P.spR); lR.knee.rotation.set(P.kneeR, 0, 0); lR.ank.rotation.set(-P.ankR + P.hipR - P.kneeR, 0, P.spR);
-    lL.ank.rotation.y = P.vee; lR.ank.rotation.y = -P.vee;
+    lL.hip.rotation.set(-P.hipL, 0, P.spL); lL.knee.rotation.set(P.kneeL, 0, 0); lL.ank.rotation.set(-P.ankL + P.hipL - P.kneeL, P.vee, -P.spL);
+    lR.hip.rotation.set(-P.hipR, 0, -P.spR); lR.knee.rotation.set(P.kneeR, 0, 0); lR.ank.rotation.set(-P.ankR + P.hipR - P.kneeR, -P.vee, P.spR);
     // whole-body tilt about the soles (flight, falls)
     this.body.rotation.x = P.pitch;
     if (this.ground) this.groundFeet(); else this.body.position.y = 0;
@@ -395,19 +347,16 @@ export class Figurine {
   // keep the lower foot on the floor (analytic, sagittal plane)
   groundFeet() {
     const P = this.pose;
-    const legLow = (hip, knee) => {
-      const a1 = hip, a2 = hip - knee; // angles from vertical
-      return HIP_DROP + Math.cos(a1) * THIGH + Math.cos(a2) * SHIN + SOLE;
-    };
-    const lowL = legLow(P.hipL, P.kneeL), lowR = legLow(P.hipR, P.kneeR);
-    const reach = Math.max(lowL, lowR) * Math.cos(P.roll * 0.5);
+    const legLow = (hip, knee) => HIP_DROP + Math.cos(hip) * THIGH + Math.cos(hip - knee) * SHIN + SOLE;
+    const reach = Math.max(legLow(P.hipL, P.kneeL), legLow(P.hipR, P.kneeR)) * Math.cos(P.roll * 0.5);
     // sole of the lower foot at y = 0 (the pose's own y only matters when grounding is off)
     this.body.position.y = reach - HIP_Y - P.y;
   }
 
   dispose() {
-    for (const m of Object.values(this.mats)) m.dispose();
+    if (this.mesh) this.mesh.geometry.dispose();
     if (this.bib) { this.bib.material.map.dispose(); this.bib.material.dispose(); }
+    this.skeleton.dispose();
     this.root.parent?.remove(this.root);
   }
 }

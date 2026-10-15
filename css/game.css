@@ -224,11 +224,11 @@ body[data-screen="none"] #btn-pause { display: grid; }
 
 /* ---------- HUD ---------- */
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
-#chips { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 180px); }
-.chip { display: flex; align-items: center; gap: 7px; background: rgba(255, 244, 220, .94); border: 3px solid var(--ink); border-radius: 999px; padding: 2px 11px 2px 3px; box-shadow: 0 3px 0 var(--ink); transition: opacity .3s, transform .3s; }
+#chips { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; width: max-content; max-width: calc(100vw - 170px); }
+.chip { display: flex; align-items: center; gap: 6px; background: rgba(255, 244, 220, .94); border: 3px solid var(--ink); border-radius: 999px; padding: 2px 11px 2px 3px; box-shadow: 0 3px 0 var(--ink); transition: opacity .3s, transform .3s; }
 .chip img { height: 24px; width: 36px; object-fit: cover; border-radius: 999px 4px 4px 999px; border: 2px solid var(--ink); }
-.chip-name { font-family: var(--display); font-size: 15px; }
-.chip-info { font-weight: 800; font-size: 14px; letter-spacing: .03em; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chip-name { font-family: var(--display); font-size: 14px; }
+.chip-info { font-weight: 800; font-size: 13px; letter-spacing: .03em; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .chip.active { background: var(--yellow); transform: scale(1.06); }
 .chip.dim { opacity: .55; }
 .msg { position: absolute; left: 0; right: 0; top: 30%; text-align: center; font-family: var(--display); font-size: clamp(38px, 7.5vw, 92px); color: var(--mc, #fff); -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill; text-shadow: 0 6px 0 var(--ink); opacity: 0; transition: opacity .2s; letter-spacing: .02em; }

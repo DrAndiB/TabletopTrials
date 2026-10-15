@@ -1,27 +1,785 @@
-// Placeholder: replaced by the real event.
+// Sprint: four lanes chalked on the playroom floor. React to the whistle, then alternate left and right
+// to run. A steady rhythm near the target cadence beats frantic mashing.
 import * as THREE from '../../vendor/three.bundle.js';
-import { Figurine, POSES } from '../figurine.js';
-import { floorMaterial } from '../props.js';
+import { Figurine, POSES, blendPose } from '../figurine.js';
+import { crowd, banner, letterBlock, crayon } from '../props.js';
+import { Rhythm, BotTapper } from '../verbs.js';
+import { Particles } from '../fx.js';
+import * as TX from '../textures.js';
+import { clamp, lerp, damp, rng, makeNoise2D } from '../util.js';
 
-class Placeholder {
-  constructor(ctx) { this.ctx = ctx; this.t = 0; this.figs = []; }
+const FINISH = 300;          // track length (cm of floor)
+const LANE = 11;             // lane width
+const TARGET = 7.0;          // strides per second for full effort
+const VMAX = 34.5;           // top speed at full effort (cm/s)
+const ACCEL = 1.75, DECEL = 1.1;
+const TRACK_X0 = -40, TRACK_X1 = 360, TRACK_Z = 28;
+const ORD = ['1st', '2nd', '3rd', '4th'];
+const FS_CHANCE = { easy: 0.03, normal: 0.01, hard: 0.005 };
+
+const laneZ = (lane) => (1.5 - lane) * LANE;
+
+class Sprint {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.r = ctx.rand;
+    this.phase = 'pre';
+    this.t = 0;
+    this.camX = 0;
+    this.cam = { x: 4, y: 4, z: 0, yaw: 0.3, pitch: 0.4, width: 66 };
+    this.excite = 0.1;
+    this.runners = [];
+    this.history = [];
+    this.replay = null;
+  }
+
+  // ---------------------------------------------------------------- venue
   async build() {
-    const { kit, R } = this.ctx;
-    R.setLighting({ sunDir: [-0.5, 1, 0.6], sunIntensity: 2.4, hemiIntensity: 0.75, background: 0x3b2f27 });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), floorMaterial());
-    floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; kit.group.add(floor);
-    this.ctx.competitors.forEach((c, i) => {
-      const f = new Figurine({ paint: c.paint, seed: c.seed, number: c.number });
-      f.root.position.set(i * 12 - 18, 0, 0); kit.group.add(f.root); this.figs.push(f);
+    const { kit: K, R, competitors } = this.ctx;
+    const g = K.group;
+    R.setLighting({
+      sunDir: [-0.42, 1, 0.55], sunColor: 0xffe1bc, sunIntensity: 2.25,
+      hemiSky: 0xfff1de, hemiGround: 0x6a4a33, hemiIntensity: 0.62,
+      envIntensity: 0.5, exposure: 1.02, background: 0x2a2019, shadowRadius: 4,
+    });
+    this.buildFloor(K);
+    this.buildTrack(K);
+    this.buildStands(K, competitors);
+    this.buildWall(K);
+    this.buildForeground(K);
+    this.buildFinish(K);
+    this.particles = new Particles(g, 700);
+    this.particles.setScale(R.renderer.domElement.height * 0.9);
+
+    // runners
+    const n = competitors.length;
+    const first = n >= 4 ? 0 : Math.floor((4 - n) / 2);
+    const blocks = [];
+    competitors.forEach((c, i) => {
+      const fig = new Figurine({ paint: c.paint, seed: c.seed, number: c.number });
+      fig.setGear('sprint');
+      const lane = first + i;
+      const z = laneZ(lane);
+      fig.root.position.set(-6, 0, z);
+      fig.root.rotation.y = Math.PI / 2;
+      g.add(fig.root);
+      const run = {
+        c, fig, lane, z, x: -6, v: 0, rhythm: new Rhythm({ target: TARGET }),
+        started: false, tGo: null, reaction: null, finished: false, tFinish: null, time: null,
+        anim: 0, effort: 0, effortAnim: 0, runW: 0, stumbleT: 0, cards: 0, heldBack: false,
+        bot: c.human ? null : new BotTapper(c.pad, rng(c.seed * 31 + 7)),
+        botCad: TARGET * this.ctx.skill.cadence * (0.97 + this.r() * 0.06),
+        pose: POSES.stand(0), idle: this.r() * 10, place: null, beat: 0,
+      };
+      this.runners.push(run);
+      // starting blocks: two little toy bricks per lane
+      blocks.push({ x: -4.2, y: 0.6, z: z + 0.65, color: c.paint.shirt }, { x: -6.0, y: 0.6, z: z - 0.65, color: c.paint.shirt });
+    });
+    const brick = new K.RoundedBoxGeometry(1.4, 1.2, 1.1, 2, 0.18);
+    K.instances(brick, K.plastic(0xffffff, 0.3), blocks, { colors: true });
+    this.buildHud();
+    this.applyCamera(1);
+  }
+
+  buildFloor(K) {
+    const T = K.TX.woodTextures({ size: 1024, planks: 4, base: 0xa87650, dark: 0x6f4a2d, light: 0xc99c6c, seed: 21, ringFreq: 12, roughBase: 0.55, lacquer: 0.3, grainContrast: 0.8 });
+    const geo = new THREE.PlaneGeometry(900, 420, 1, 1);
+    geo.rotateX(-Math.PI / 2);
+    // planks run along the track (x): u across the boards (z), v along them (x)
+    const pos = geo.attributes.position, uv = geo.attributes.uv;
+    for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getZ(i) / 58, pos.getX(i) / 150);
+    const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ ...T, roughness: 0.66, envMapIntensity: 0.35 }));
+    m.position.set(160, 0, -40);
+    m.receiveShadow = true;
+    K.group.add(m);
+  }
+
+  // the chalk track: lane lines, start and finish, numbers and doodles drawn into one long texture
+  buildTrack(K) {
+    const W = 4096, H = 576;
+    const sx = W / (TRACK_X1 - TRACK_X0), sz = H / (TRACK_Z * 2);
+    const c = K.TX.makeCanvas(W, H), g = c.getContext('2d');
+    const r = rng(404);
+    const X = (x) => (x - TRACK_X0) * sx, Z = (z) => (z + TRACK_Z) * sz;
+    // dusty smears first
+    for (let i = 0; i < 260; i++) {
+      const x = r() * W, y = r() * H, rad = 20 + r() * 70;
+      const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+      gr.addColorStop(0, `rgba(255,255,255,${0.03 + r() * 0.05})`); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = gr; g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+    }
+    const chalk = (pts, width = 6, alpha = 0.85) => {
+      // several wobbly passes with a grainy edge, like a kid drawing with a stick of chalk
+      for (let pass = 0; pass < 3; pass++) {
+        g.strokeStyle = `rgba(255,255,255,${alpha * (pass === 0 ? 0.55 : 0.3)})`;
+        g.lineWidth = width * (pass === 0 ? 1 : 0.6 + r() * 0.5);
+        g.lineCap = 'round'; g.lineJoin = 'round';
+        g.beginPath();
+        pts.forEach(([x, y], k) => { const jx = (r() - 0.5) * 2.2, jy = (r() - 0.5) * 2.2; if (k) g.lineTo(x + jx, y + jy); else g.moveTo(x + jx, y + jy); });
+        g.stroke();
+      }
+      // grain: speckles along the stroke
+      for (let k = 1; k < pts.length; k++) {
+        const [x1, y1] = pts[k - 1], [x2, y2] = pts[k];
+        const len = Math.hypot(x2 - x1, y2 - y1);
+        for (let d = 0; d < len; d += 3) {
+          const t = d / len;
+          g.fillStyle = `rgba(255,255,255,${0.15 + r() * 0.35})`;
+          g.fillRect(x1 + (x2 - x1) * t + (r() - 0.5) * width * 1.8, y1 + (y2 - y1) * t + (r() - 0.5) * width * 1.8, 1.5, 1.5);
+        }
+      }
+    };
+    const line = (x1, z1, x2, z2, w, a) => {
+      const pts = [], n = Math.max(2, Math.ceil(Math.hypot((x2 - x1) * sx, (z2 - z1) * sz) / 60));
+      for (let i = 0; i <= n; i++) {
+        const t = i / n;
+        pts.push([X(x1 + (x2 - x1) * t), Z(z1 + (z2 - z1) * t) + Math.sin(i * 1.3 + x1) * 2.5]);
+      }
+      chalk(pts, w, a);
+    };
+    // lane lines
+    for (let k = 0; k <= 4; k++) line(-14, (k - 2) * LANE, FINISH + 30, (k - 2) * LANE, 7, 0.9);
+    // start line and finish line (a chalk chequer at the finish)
+    line(0, -2 * LANE, 0, 2 * LANE, 9, 1);
+    line(FINISH, -2 * LANE, FINISH, 2 * LANE, 9, 1);
+    for (let row = 0; row < 2; row++) {
+      for (let k = 0; k < 11; k++) {
+        if ((k + row) % 2) continue;
+        const z0 = -2 * LANE + (k * 4 * LANE) / 11, z1 = z0 + (4 * LANE) / 11;
+        const x0 = FINISH + 1 + row * 2.2;
+        for (let h = 0; h < 6; h++) line(x0, z0 + (h + 0.5) * ((z1 - z0) / 6), x0 + 2.2, z0 + (h + 0.5) * ((z1 - z0) / 6), 3, 0.7);
+      }
+    }
+    // words, numbers and doodles
+    const text = (s, x, z, size, rot = 0, alpha = 0.85) => {
+      g.save(); g.translate(X(x), Z(z)); g.rotate(rot);
+      g.font = `${size}px "Lilita One", Impact, sans-serif`;
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillStyle = `rgba(255,255,255,${alpha})`;
+      g.fillText(s, 0, 0);
+      // chalky: knock little holes out of the letters
+      g.globalCompositeOperation = 'destination-out';
+      for (let i = 0; i < size * 1.6; i++) { g.fillStyle = `rgba(0,0,0,${0.3 + r() * 0.5})`; g.fillRect((r() - 0.5) * size * s.length * 0.6, (r() - 0.5) * size * 0.8, 2 + r() * 2, 2 + r() * 2); }
+      g.restore();
+    };
+    for (let lane = 0; lane < 4; lane++) text(String(lane + 1), -9, laneZ(lane), 70, -0.05 + r() * 0.1);
+    text('START', -14, -2 * LANE - 3.5, 46, 0, 0.8);
+    text('FINISH', FINISH + 18, -2 * LANE - 3.6, 54, -0.03, 0.9);
+    for (const d of [50, 100, 150, 200, 250]) text(String(d), d, -2 * LANE - 3.4, 34, 0, 0.6);
+    for (let lane = 0; lane < 4; lane++) for (const ax of [70, 170, 250]) text('>>', ax + lane * 6, laneZ(lane), 40, 0, 0.35);
+    // doodles: a star, a smiling sun, a heart
+    const star = (x, z, R0) => { const pts = []; for (let i = 0; i <= 10; i++) { const a = -Math.PI / 2 + (i * Math.PI) / 5, rr = i % 2 ? R0 * 0.45 : R0; pts.push([X(x) + Math.cos(a) * rr, Z(z) + Math.sin(a) * rr]); } chalk(pts, 5, 0.75); };
+    star(-28, -12, 26); star(FINISH + 40, 14, 30); star(140, 25, 16);
+    const sun = (x, z) => { const cx = X(x), cy = Z(z), pts = []; for (let i = 0; i <= 24; i++) { const a = (i / 24) * Math.PI * 2; pts.push([cx + Math.cos(a) * 30, cy + Math.sin(a) * 30]); } chalk(pts, 5, 0.7); for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; chalk([[cx + Math.cos(a) * 40, cy + Math.sin(a) * 40], [cx + Math.cos(a) * 58, cy + Math.sin(a) * 58]], 5, 0.7); } chalk([[cx - 14, cy + 6], [cx - 6, cy + 14], [cx + 6, cy + 14], [cx + 14, cy + 6]], 4, 0.7); g.fillStyle = 'rgba(255,255,255,0.7)'; g.fillRect(cx - 11, cy - 10, 5, 6); g.fillRect(cx + 7, cy - 10, 5, 6); };
+    sun(-30, 16); sun(FINISH + 46, -14);
+    const heart = (x, z) => { const cx = X(x), cy = Z(z), pts = []; for (let i = 0; i <= 30; i++) { const t = (i / 30) * Math.PI * 2; pts.push([cx + 16 * Math.sin(t) ** 3 * 1.4, cy - (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) * 1.4]); } chalk(pts, 4, 0.7); };
+    heart(210, 25.5);
+    const tex = K.TX.toTexture(c, { wrap: false });
+    tex.anisotropy = 8;
+    const geo = new THREE.PlaneGeometry(TRACK_X1 - TRACK_X0, TRACK_Z * 2);
+    geo.rotateX(-Math.PI / 2);
+    const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -1 }));
+    m.position.set((TRACK_X0 + TRACK_X1) / 2, 0.03, 0);
+    m.receiveShadow = true;
+    m.renderOrder = 1;
+    K.group.add(m);
+    // a few sticks of chalk and the chalk box by the start
+    const sticks = [];
+    for (let i = 0; i < 7; i++) sticks.push({ x: -24 + i * 1.6 + this.r() * 0.5, y: 0.45, z: 30 + this.r() * 3, ry: this.r() * 3, rz: Math.PI / 2, color: ['#ffffff', '#ffd1dc', '#c9e7ff', '#fff3b0', '#ffffff'][i % 5] });
+    K.instances(new THREE.CylinderGeometry(0.45, 0.45, 4.2, 10), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 }), sticks, { colors: true });
+    const box = new THREE.Mesh(new K.RoundedBoxGeometry(11, 2.6, 6, 2, 0.3), K.paint(0x2f6fe0));
+    box.position.set(-16, 1.3, 36); box.rotation.y = 0.2; box.castShadow = true; box.receiveShadow = true;
+    K.group.add(box);
+    K.contact(-16, 36, 7, 4.5, 0.35, 0.2);
+  }
+
+  cardboardTexture(K, seed, label) {
+    const c = K.TX.makeCanvas(512, 256), g = c.getContext('2d');
+    const r = rng(seed);
+    g.fillStyle = '#c69a62'; g.fillRect(0, 0, 512, 256);
+    const n = makeNoise2D(seed);
+    const img = g.getImageData(0, 0, 512, 256), d = img.data;
+    for (let y = 0; y < 256; y++) for (let x = 0; x < 512; x++) {
+      const k = (y * 512 + x) * 4;
+      const v = 0.9 + 0.1 * Math.sin(x * 0.55) * 0.5 + (n.fbm(x / 64, y / 64, 3, 8) - 0.5) * 0.18;
+      d[k] *= v; d[k + 1] *= v; d[k + 2] *= v;
+    }
+    g.putImageData(img, 0, 0);
+    // packing tape across the top and a marker label
+    g.fillStyle = 'rgba(214,170,104,0.85)'; g.fillRect(0, 10, 512, 34);
+    g.fillStyle = 'rgba(255,255,255,0.18)'; g.fillRect(0, 14, 512, 5);
+    g.fillStyle = '#2b2622'; g.font = '44px "Lilita One", Impact, sans-serif'; g.textAlign = 'center';
+    g.save(); g.translate(256 + (r() - 0.5) * 80, 160); g.rotate((r() - 0.5) * 0.12); g.fillText(label, 0, 0); g.restore();
+    g.strokeStyle = '#2b2622'; g.lineWidth = 6; g.lineCap = 'round';
+    const ax = 60 + r() * 30;
+    g.beginPath(); g.moveTo(ax, 220); g.lineTo(ax, 175); g.moveTo(ax - 14, 190); g.lineTo(ax, 175); g.lineTo(ax + 14, 190); g.stroke();
+    return K.TX.toTexture(c, { wrap: false });
+  }
+
+  buildStands(K, competitors) {
+    const g = K.group;
+    const labels = ['TOYS', 'BLOCKS', 'BOOKS', 'DRESS UP', 'PUZZLES', 'CARS'];
+    const mats = labels.map((l, i) => new THREE.MeshStandardMaterial({ map: this.cardboardTexture(K, 50 + i, l), roughness: 0.92 }));
+    const plain = new THREE.MeshStandardMaterial({ color: 0xbf9259, roughness: 0.95 });
+    const spots = [];
+    const addBox = (x0, x1, z, d, h, mi) => {
+      const w = x1 - x0;
+      const geo = new THREE.BoxGeometry(w, h, d);
+      const m = new THREE.Mesh(geo, [plain, plain, plain, plain, mats[mi % mats.length], plain]);
+      m.position.set((x0 + x1) / 2, h / 2, z);
+      m.castShadow = true; m.receiveShadow = true;
+      g.add(m);
+      K.contact((x0 + x1) / 2, z, w * 0.56, d * 0.75, 0.35);
+      return { x0, x1, h, z };
+    };
+    const front = [], back = [];
+    let x = -90, i = 0;
+    while (x < 420) { const w = 46 + this.r() * 22; front.push(addBox(x, x + w, -34, 10, 4.5 + this.r() * 2, i++)); x += w + 3 + this.r() * 4; }
+    x = -110;
+    while (x < 440) { const w = 52 + this.r() * 26; back.push(addBox(x, x + w, -48, 12, 11 + this.r() * 3.5, i++)); x += w + 2 + this.r() * 4; }
+    for (const b of front) {
+      for (let k = 0; k < 2; k++) {
+        if (this.r() < 0.25) continue;
+        spots.push({ x: lerp(b.x0 + 7, b.x1 - 7, k ? 0.8 : 0.2) + (this.r() - 0.5) * 4, y: b.h, z: -34, ry: (this.r() - 0.5) * 0.4, size: 9.5 + this.r() * 2.5 });
+      }
+    }
+    const bannerSpots = [];
+    for (const b of back) {
+      const nb = 1 + (this.r() < 0.5 ? 1 : 0);
+      for (let k = 0; k < nb; k++) {
+        const xx = lerp(b.x0 + 10, b.x1 - 10, nb === 1 ? 0.5 : k ? 0.78 : 0.22);
+        spots.push({ x: xx, y: b.h, z: -48, ry: (this.r() - 0.5) * 0.4, size: 10 + this.r() * 3 });
+      }
+      bannerSpots.push({ x: b.x1 - 4, y: b.h });
+    }
+    this.crowd = crowd(g, spots, 7);
+    // the competitors' banners, near the start and the finish
+    const codes = competitors.map((c) => c.code);
+    const near = bannerSpots.filter((s) => s.x > -60 && s.x < 60).concat(bannerSpots.filter((s) => s.x > FINISH - 70 && s.x < FINISH + 70));
+    near.forEach((s, k) => {
+      const b = banner(codes[k % codes.length], 13, { seed: k + 1 });
+      b.position.set(s.x, s.y, -45);
+      b.rotation.y = (this.r() - 0.5) * 0.25;
+      g.add(b);
     });
   }
-  attract() {}
-  start() { this.t = 0; }
-  update(dt) {
-    this.t += dt;
-    for (let i = 0; i < this.ctx.competitors.length; i++) this.ctx.presses(i);
-    if (!this.ctx.attract && this.t > 2 && this.ctx.time() > 0) this.ctx.finish(this.ctx.competitors.map((c, i) => ({ value: 10 + i, text: (10 + i).toFixed(2) })));
+
+  // the wall behind the stands: skirting board, wallpaper and pinned crayon drawings
+  buildWall(K) {
+    const g = K.group;
+    const wc = K.TX.makeCanvas(512, 512), w = wc.getContext('2d');
+    w.fillStyle = '#f3e3c3'; w.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 8; i++) { w.fillStyle = i % 2 ? 'rgba(226,191,140,0.35)' : 'rgba(255,255,255,0.25)'; w.fillRect(i * 64, 0, 32, 512); }
+    const r = rng(9);
+    for (let i = 0; i < 40; i++) { w.fillStyle = ['#e9a59a', '#9bc3e6', '#f2cf6b', '#9fd3a5'][i % 4]; const x = r() * 512, y = r() * 512; w.beginPath(); w.arc(x, y, 6, 0, Math.PI * 2); w.fill(); }
+    const tex = K.TX.toTexture(wc, { repeat: [7, 1.2] });
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(1000, 170), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }));
+    wall.position.set(160, 85, -86);
+    wall.receiveShadow = true;
+    g.add(wall);
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(1000, 9, 2), K.paint(0xf7f2e8, { roughness: 0.4 }));
+    skirt.position.set(160, 4.5, -85);
+    skirt.castShadow = true; skirt.receiveShadow = true;
+    g.add(skirt);
+    // crayon drawings on paper, held by bits of tape
+    const kinds = ['sun', 'house', 'runner', 'rainbow', 'cat', 'flower'];
+    kinds.forEach((kind, i) => {
+      const pc = K.TX.makeCanvas(256, 200), p = pc.getContext('2d');
+      p.fillStyle = '#fbf8f1'; p.fillRect(0, 0, 256, 200);
+      drawCrayon(p, kind, rng(70 + i));
+      p.fillStyle = 'rgba(240,220,170,0.75)'; p.fillRect(100, 0, 56, 14);
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(26, 20), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(pc, { wrap: false }), roughness: 0.9 }));
+      m.position.set(-40 + i * 78 + r() * 10, 38 + r() * 20, -85.4);
+      m.rotation.z = (r() - 0.5) * 0.16;
+      m.receiveShadow = true;
+      g.add(m);
+    });
   }
-  frame() { this.figs.forEach((f, i) => f.setPose(POSES.bounce(this.ctx.time() + i))); this.ctx.R.orbit(0, 4, 0, { yaw: 0.3 + this.ctx.time() * 0.05, pitch: 0.35, width: 70 }); }
+
+  // big toys passing in front (they sit low on screen, blurred by the tilt-shift)
+  buildForeground(K) {
+    const g = K.group, r = this.r;
+    // striped rubber ball
+    const bc = K.TX.makeCanvas(256, 128), b = bc.getContext('2d');
+    const cols = ['#e23b2e', '#ffffff', '#2f6fe0', '#ffffff', '#f2c230', '#ffffff', '#2fae5a', '#ffffff'];
+    cols.forEach((col, i) => { b.fillStyle = col; b.fillRect(i * 32, 0, 32, 128); });
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(11, 40, 28), K.plastic(0xffffff, 0.25, { map: K.TX.toTexture(bc, { wrap: true }) }));
+    ball.position.set(75, 11, 52); ball.rotation.set(0.3, 0.5, 0.2);
+    ball.castShadow = true; ball.receiveShadow = true;
+    g.add(ball); K.contact(75, 52, 10, 10, 0.45);
+    // a stack of picture books
+    const bookCols = [0x3d7bd9, 0xe8c04a, 0xd2553f];
+    bookCols.forEach((col, i) => {
+      const bk = new THREE.Mesh(new K.RoundedBoxGeometry(26, 2.6, 19, 2, 0.4), K.paint(col, { roughness: 0.6, clearcoat: 0.2 }));
+      bk.position.set(170 + i * 1.5, 1.3 + i * 2.6, 44 + (i % 2) * 1.2); bk.rotation.y = 0.15 * (i - 1);
+      bk.castShadow = true; bk.receiveShadow = true;
+      g.add(bk);
+      const pages = new THREE.Mesh(new THREE.BoxGeometry(25, 2.0, 18.2), new THREE.MeshStandardMaterial({ color: 0xf7f2e4, roughness: 0.9 }));
+      pages.position.copy(bk.position); pages.position.x += 0.6; pages.rotation.y = bk.rotation.y;
+      g.add(pages);
+    });
+    K.contact(171, 45, 16, 12, 0.4);
+    // a xylophone
+    const bars = [];
+    const xc = ['#e23b2e', '#ef7d2c', '#f2c230', '#2fae5a', '#2f6fe0', '#6b4fc7', '#d84f9a'];
+    xc.forEach((col, i) => bars.push({ x: 248 + i * 3.2, y: 3.4, z: 48, sx: 2.6, sy: 0.7, sz: 12 - i * 0.9, color: col }));
+    K.instances(new K.RoundedBoxGeometry(1, 1, 1, 2, 0.2), K.paint(0xffffff, { roughness: 0.3, metalness: 0.2 }), bars, { colors: true });
+    for (const zz of [43.5, 52.5]) { const rail = new THREE.Mesh(new K.RoundedBoxGeometry(26, 3, 2, 2, 0.5), K.paint(0xd8a25e)); rail.position.set(258, 1.5, zz); rail.castShadow = true; g.add(rail); }
+    K.contact(258, 48, 15, 8, 0.4);
+    // a little pyramid of letter blocks by the finish
+    const lb = [['A', 'B', 'C', 'D', 'E', 'F'], ['G', 'O', 'L', 'D', 'W', 'I'], ['N', 'R', 'U', 'S', 'H', 'Y'], ['F', 'U', 'N', 'J', 'O', 'Y']];
+    [[338, 2.8, 42, 0.2], [344.5, 2.8, 43, -0.15], [341, 8.4, 42.6, 0.4], [-48, 2.8, 40, 0.3]].forEach(([x, y, z, ry], i) => {
+      const m = letterBlock(lb[i], 5.6, i + 3); m.position.set(x, y, z); m.rotation.y = ry; g.add(m);
+    });
+    K.contact(341, 42.5, 9, 6, 0.4);
+    // crayons lying about and a sock
+    [[120, -30, 0.4], [124, -28, 1.2], [205, 31, 2.4], [-35, -30, 2.0]].forEach(([x, z, ry], i) => { const c = crayon(i * 2 + 1); c.position.set(x, 0.45, z); c.rotation.y = ry; g.add(c); });
+    void r;
+  }
+
+  // block towers and the red wool finish tape
+  buildFinish(K) {
+    const g = K.group;
+    const zA = 2 * LANE + 4.5;
+    const towers = [[['F', 'I', 'N', 'I', 'S', 'H'], ['W', 'O', 'O', 'L', 'Y', 'A'], ['R', 'E', 'D', 'T', 'A', 'P']], [['G', 'O', 'A', 'L', 'Y', 'E'], ['S', 'T', 'O', 'P', 'H', 'I'], ['W', 'I', 'N', 'N', 'E', 'R']]];
+    [-1, 1].forEach((side, ti) => {
+      for (let k = 0; k < 3; k++) {
+        const m = letterBlock(towers[ti][k], 4.4, 11 + ti * 3 + k);
+        m.position.set(FINISH + 0.5, 2.2 + k * 4.4, side * zA);
+        m.rotation.y = (k - 1) * 0.12 * side;
+        g.add(m);
+      }
+      K.contact(FINISH + 0.5, side * zA, 4, 4, 0.35);
+    });
+    this.tapeY = 6.2; this.tapeZ = zA - 1.6;
+    this.tapeMat = new THREE.MeshStandardMaterial({ color: 0xd9262b, roughness: 0.85 });
+    this.tape = new THREE.Mesh(this.tapeGeometry(-this.tapeZ, this.tapeZ, 0, 0), this.tapeMat);
+    this.tape.castShadow = true;
+    g.add(this.tape);
+    this.tapeHalves = null;
+  }
+
+  tapeGeometry(z0, z1, push = 0, fall = 0) {
+    const pts = [];
+    for (let i = 0; i <= 16; i++) {
+      const t = i / 16;
+      const sag = Math.sin(t * Math.PI) * (0.5 + fall * 0.3);
+      const z = lerp(z0, z1, t);
+      pts.push(new THREE.Vector3(FINISH + 0.3 + push * t * t, Math.max(0.25, this.tapeY - sag - fall * this.tapeY * t * t), z));
+    }
+    return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.16, 6, false);
+  }
+
+  buildHud() {
+    const el = this.ctx.hud.el;
+    const style = document.createElement('style');
+    style.textContent = `.rm{position:absolute;left:12px;width:min(270px,42vw);background:rgba(255,244,220,.95);border:3px solid #1f1a17;border-radius:14px;box-shadow:0 3px 0 #1f1a17;padding:5px 10px 7px;font:800 12px/1.2 Rubik,sans-serif;color:#1f1a17}
+      .rm .h{display:flex;align-items:center;gap:6px}.rm img{height:18px;width:27px;object-fit:cover;border-radius:3px;border:2px solid #1f1a17}
+      .rm .k{margin-left:auto;font-weight:700;color:#4a413a}.rm .b{position:relative;height:13px;border:2px solid #1f1a17;border-radius:99px;background:#fff;margin-top:4px;overflow:hidden}
+      .rm .b i{position:absolute;inset:0 auto 0 0;width:0;background:#ef7d2c;border-radius:99px;transition:background .2s}
+      .rm .b u{position:absolute;top:-2px;bottom:-2px;width:3px;background:#1f1a17;left:96.2%}
+      .rm .n{position:absolute;right:8px;top:4px;font-size:15px;opacity:0;transition:opacity .05s}.rm .n.on{opacity:1}
+      .rm.go .b i{background:#2fae5a}.rm.ok .b i{background:#f2c230}`;
+    el.appendChild(style);
+    this.meters = [];
+    const humans = this.runners.filter((ru) => ru.c.human);
+    humans.forEach((ru, k) => {
+      const d = document.createElement('div');
+      d.className = 'rm';
+      d.style.bottom = `${(ru.c.type === 'touch' ? 120 : 12) + k * 58}px`;
+      const keys = ru.c.type === 'touch' ? '◀ ▶ in turn' : 'left, right, left, right…';
+      d.innerHTML = `<div class="h"><img src="${ru.c.flag}" alt=""><span>${ru.c.short}</span><span class="k">${keys}</span></div><div class="b"><i></i><u></u></div><span class="n">♪</span>`;
+      el.appendChild(d);
+      this.meters.push({ ru, d, bar: d.querySelector('.b i'), note: d.querySelector('.n'), k: '' });
+    });
+  }
+
+  // ---------------------------------------------------------------- flow
+  attract() { this.phase = 'attract'; }
+
+  start() {
+    this.phase = 'walk';
+    this.t = 0;
+    this.whistleAt = null;
+    this.falseStarts = 0;
+    this.ctx.sound.setLoop('crowd', 0.35);
+    for (const ru of this.runners) ru.c.pad.clear?.();
+  }
+
+  setMessage(text, kind = '', color = '#fff', dur = 0) { this.ctx.hud.message(text, kind, color, dur); }
+
+  // fixed step
+  update(dt) {
+    const ctx = this.ctx, now = ctx.time();
+    this.t += dt;
+    const P = this.phase;
+    if (P === 'attract' || P === 'pre') { for (let i = 0; i < this.runners.length; i++) ctx.presses(i); return; }
+
+    if (P === 'walk') {
+      for (let i = 0; i < this.runners.length; i++) ctx.presses(i);
+      if (this.t > 0.6 && !this.marksCalled) { this.marksCalled = true; this.setMessage('On your marks', 'small'); ctx.sound.block(false); }
+      if (this.t > 1.9) { this.phase = 'marks'; this.t = 0; }
+    } else if (P === 'marks') {
+      for (let i = 0; i < this.runners.length; i++) ctx.presses(i);
+      if (this.t > 1.3) {
+        this.phase = 'set'; this.t = 0;
+        this.setMessage('Set', 'small', '#ffc93c'); ctx.sound.block(true);
+        this.whistleIn = 1.2 + this.r() * 1.0;
+        // computer kids very rarely jump the gun
+        for (const ru of this.runners) {
+          ru.cpuJump = !ru.c.human && !ru.heldBack && this.r() < (FS_CHANCE[ctx.skillName] ?? 0.01) ? 0.35 + this.r() * (this.whistleIn - 0.45) : null;
+        }
+      }
+    } else if (P === 'set') {
+      for (let i = 0; i < this.runners.length; i++) {
+        const ru = this.runners[i];
+        if (ru.cpuJump != null && this.t >= ru.cpuJump) { ru.cpuJump = null; ru.c.pad.push('left', true, now); ru.c.pad.push('left', false, now + 0.03); }
+        const q = ctx.presses(i);
+        if (q.some((e) => e.down) && !ru.heldBack) { this.falseStart(ru); if (this.phase !== 'set') return; }
+      }
+      if (this.t >= this.whistleIn) this.go(now);
+    } else if (P === 'false') {
+      for (let i = 0; i < this.runners.length; i++) ctx.presses(i);
+      if (this.t > 2.4) { this.phase = 'marks'; this.t = 0; this.setMessage('On your marks', 'small'); ctx.sound.block(false); }
+    } else if (P === 'race' || P === 'finishing') {
+      this.race(dt, now);
+    } else if (P === 'replay') {
+      for (let i = 0; i < this.runners.length; i++) ctx.presses(i);
+      this.replay.t += dt * this.replay.speed;
+      if (this.replay.t >= this.replay.t1) this.endRace();
+    } else if (P === 'done') {
+      for (let i = 0; i < this.runners.length; i++) ctx.presses(i);
+    }
+  }
+
+  falseStart(ru) {
+    const ctx = this.ctx;
+    if (ru.cards >= 1) {
+      // second false start for this runner: no restart, they start late
+      ru.heldBack = true;
+      ctx.hud.flash(`${ru.c.short}: held back!`, '#ffc93c');
+      ctx.sound.stumble();
+      return;
+    }
+    ru.cards++;
+    this.falseStarts++;
+    this.phase = 'false'; this.t = 0;
+    this.setMessage(`False start: ${ru.c.short}`, 'small', '#ff8a65');
+    ctx.sound.whistle(0.18); setTimeout(() => ctx.sound.whistle(0.18), 220);
+    ctx.sound.aww();
+    for (const r2 of this.runners) { r2.c.pad.clear?.(); r2.cpuJump = null; }
+  }
+
+  go(now) {
+    const ctx = this.ctx;
+    this.phase = 'race'; this.t = 0;
+    this.whistleAt = now;
+    this.setMessage('GO!', 'big', '#ffc93c', 0.9);
+    ctx.sound.whistle(0.5);
+    for (const ru of this.runners) {
+      ru.tGo = now + (ru.heldBack ? 0.5 : 0);
+      if (ru.bot) {
+        const [a, b] = ctx.skill.react;
+        ru.bot.start(ru.tGo + a + this.r() * (b - a));
+      }
+    }
+    this.history = [];
+  }
+
+  race(dt, now) {
+    const ctx = this.ctx;
+    let leader = null;
+    for (let i = 0; i < this.runners.length; i++) {
+      const ru = this.runners[i];
+      if (ru.bot && !ru.finished) ru.bot.update(now, ru.botCad, ctx.skill.jitter, ctx.skill.stumble);
+      for (const e of ctx.presses(i)) {
+        if (!e.down || e.b === 'action') continue;
+        if (e.t < ru.tGo) continue; // held back runners wait their half second
+        if (ru.finished && ru.v < 4) continue;
+        const res = ru.rhythm.press(e.b, e.t);
+        if (!ru.started) { ru.started = true; ru.reaction = e.t - this.whistleAt; ru.startT = e.t; }
+        if (res === 'stumble') {
+          ru.v *= 0.85; ru.stumbleT = 0.35;
+          ctx.sound.stumble(this.pan(ru.x));
+        } else {
+          ru.beat = 0.12;
+          ctx.sound.step(ru.c.human ? 0.9 : 0.45, this.pan(ru.x));
+          this.particles.emit(ru.x - 1, 0.3, ru.z + (e.b === 'left' ? 0.5 : -0.5), { vx: -6, spread: 3, up: 2.5, color: 0xf6f1e8, size: 1.1, life: 0.55, alpha: 0.28, grav: 3, grow: 1.6, n: 2 });
+        }
+      }
+      // speed
+      const eff = ru.started ? ru.rhythm.effort(now) : 0;
+      ru.effort = eff;
+      const target = ru.finished ? 0 : VMAX * eff;
+      const k = target > ru.v ? ACCEL : (ru.finished ? 1.4 : DECEL);
+      ru.v += (target - ru.v) * (1 - Math.exp(-k * dt));
+      if (ru.stumbleT > 0) ru.stumbleT -= dt;
+      const x0 = ru.x;
+      ru.x += ru.v * dt;
+      if (!ru.finished && x0 < FINISH && ru.x >= FINISH) {
+        const tc = now - dt + ((FINISH - x0) / Math.max(1e-6, ru.x - x0)) * dt;
+        this.finishRunner(ru, tc);
+      }
+      if (ru.finished && ru.x > FINISH + 46) ru.v = Math.min(ru.v, 2);
+      if (!leader || ru.x > leader.x) leader = ru;
+    }
+    this.leader = leader;
+    // history for the replay (last 5 s)
+    this.history.push({ t: now, s: this.runners.map((ru) => [ru.x, ru.anim, ru.effortAnim, ru.runW, ru.stumbleT]) });
+    while (this.history.length > 600) this.history.shift();
+    // crowd excitement builds as the leader nears the line
+    const lx = leader ? leader.x : 0;
+    this.excite = Math.max(this.excite * Math.exp(-0.4 * dt), clamp((lx - 120) / 180, 0.12, 1));
+    // when is it over?
+    const done = this.runners.every((ru) => ru.finished);
+    if (this.firstFinish != null && (done || now - this.firstFinish > 8)) this.startReplay(now);
+    else if (this.firstFinish == null && now - this.whistleAt > 30) this.startReplay(now);
+  }
+
+  finishRunner(ru, tc) {
+    const ctx = this.ctx;
+    ru.finished = true;
+    ru.tFinish = tc;
+    ru.time = tc - this.whistleAt;
+    const place = this.runners.filter((o) => o.finished).length - 1;
+    ru.place = place;
+    if (place === 0) {
+      this.firstFinish = tc;
+      this.breakTape(ru);
+      ctx.sound.cheer(1);
+      this.phase = 'finishing';
+    }
+    if (ru.c.human || place === 0) ctx.hud.flash(`${ru.c.short} ${ru.time.toFixed(2)} s`, place === 0 ? '#ffc93c' : '#ffffff');
+  }
+
+  breakTape(ru) {
+    this.tape.visible = false;
+    const K = this.ctx.kit;
+    this.tapeHalves = [new THREE.Mesh(this.tapeGeometry(-this.tapeZ, ru.z), this.tapeMat), new THREE.Mesh(this.tapeGeometry(this.tapeZ, ru.z), this.tapeMat)];
+    for (const h of this.tapeHalves) { h.castShadow = true; K.group.add(h); }
+    this.tapeBreakZ = ru.z;
+    this.tapeT = 0;
+  }
+
+  startReplay(now) {
+    const fin = this.runners.filter((ru) => ru.finished).sort((a, b) => a.tFinish - b.tFinish);
+    for (const ru of this.runners) ru.bot?.stop?.();
+    if (!fin.length || this.history.length < 10) { this.endRace(); return; }
+    const t0 = fin[0].tFinish - 0.65;
+    const t1 = (fin[1] ? Math.min(fin[1].tFinish, fin[0].tFinish + 0.6) : fin[0].tFinish) + 0.3;
+    const close = fin[1] && fin[1].tFinish - fin[0].tFinish < 0.05;
+    this.replay = { t: Math.max(t0, this.history[0].t), t0, t1: Math.min(t1, this.history[this.history.length - 1].t), speed: 0.35, close };
+    this.phase = 'replay';
+    this.setMessage(close ? 'Photo finish!' : 'Replay', 'small', close ? '#ffc93c' : '#fff');
+    void now;
+  }
+
+  endRace() {
+    const ctx = this.ctx;
+    this.phase = 'done'; this.t = 0;
+    this.setMessage('');
+    ctx.sound.setLoop('crowd', 0.3);
+    const results = this.runners.map((ru) => {
+      if (!ru.finished) return { value: null, dnf: true, text: 'Didn\'t finish', sub: ru.reaction != null ? `reaction ${ru.reaction.toFixed(2)} s` : 'never got going' };
+      const notes = [];
+      if (ru.reaction != null) notes.push(`reaction ${ru.reaction.toFixed(2)} s`);
+      if (ru.cards) notes.push(ru.heldBack ? 'held back after two false starts' : '1 false start');
+      return { value: ru.time, text: `${ru.time.toFixed(2)} s`, short: `${ru.time.toFixed(2)} s`, sub: notes.join(' · ') };
+    });
+    ctx.finish(results);
+  }
+
+  pan(x) { return clamp((x - this.camX) / 50, -0.8, 0.8); }
+
+  // ---------------------------------------------------------------- per frame
+  frame(dt, paused) {
+    const ctx = this.ctx;
+    const tt = ctx.time();
+    if (!paused) this.particles.update(dt);
+    const replaying = this.phase === 'replay' && this.replay;
+    let snap = null;
+    if (replaying) snap = this.sample(this.replay.t);
+    this.runners.forEach((ru, i) => {
+      let pose;
+      const P = this.phase;
+      if (P === 'attract' || P === 'pre') {
+        ru.fig.root.position.set(-8 - (i % 2) * 3, 0, ru.z);
+        const kind = (i + Math.floor((tt + ru.idle) / 4)) % 4;
+        pose = kind === 0 ? POSES.bounce(tt + ru.idle) : kind === 1 ? POSES.wave(tt + ru.idle) : kind === 2 ? POSES.stand(tt + ru.idle) : POSES.run((tt * 1.6 + ru.idle) % 1, 0.25);
+        ru.fig.root.rotation.y = Math.PI / 2 + (kind === 1 ? 0.9 : 0.3 * Math.sin(tt * 0.5 + i));
+        ru.fig.setExpression('happy');
+      } else if (P === 'walk') {
+        const k = clamp(this.t / 1.6, 0, 1);
+        ru.fig.root.position.set(lerp(-14, -5.2, k), 0, ru.z);
+        ru.fig.root.rotation.y = Math.PI / 2;
+        pose = k < 1 ? blendPose(POSES.walk((this.t * 1.4 + i * 0.3) % 1), POSES.crouch(0), clamp((k - 0.75) * 4, 0, 1)) : POSES.crouch(0);
+        ru.fig.setExpression('focus');
+      } else if (P === 'marks' || P === 'set' || P === 'false') {
+        ru.fig.root.position.set(-5.2, 0, ru.z);
+        ru.fig.root.rotation.y = Math.PI / 2;
+        if (P === 'false') pose = blendPose(POSES.crouch(1), POSES.stand(tt), clamp(this.t * 2, 0, 1));
+        else if (P === 'set') pose = POSES.crouch(clamp(this.t / 0.45, 0, 1));
+        else pose = POSES.crouch(0);
+        ru.fig.setExpression(P === 'false' ? 'wow' : 'focus');
+      } else {
+        // racing, finishing, replay, done
+        let x = ru.x, anim, effA, runW, stumble;
+        if (snap) { [x, anim, effA, runW, stumble] = snap[i]; }
+        else {
+          if (!paused) {
+            const cad = ru.started ? Math.min(9, ru.rhythm.cadence(tt)) : 0;
+            const moving = ru.v > 1.5;
+            ru.anim = (ru.anim + (moving ? Math.max(cad, ru.v / 6) : 0) * 0.5 * dt) % 1;
+            ru.effortAnim = damp(ru.effortAnim, clamp(ru.v / VMAX, 0, 1.1), 6, dt);
+            ru.runW = ru.started ? clamp(ru.runW + dt * 3, 0, 1) : 0;
+            ru.beat = Math.max(0, ru.beat - dt);
+          }
+          anim = ru.anim; effA = ru.effortAnim; runW = ru.runW; stumble = ru.stumbleT;
+        }
+        ru.fig.root.position.set(x, 0, ru.z);
+        ru.fig.root.rotation.y = Math.PI / 2;
+        if (this.phase === 'done' && ru.finished && ru.v < 3) {
+          const w = this.t + ru.idle;
+          pose = ru.place === 0 ? POSES.cheer(w) : ru.place === 1 ? POSES.wave(w) : POSES.stand(w);
+          ru.fig.root.rotation.y = Math.PI / 2 + Math.min(1.2, this.t * 1.5) * 0.9;
+          ru.fig.setExpression(ru.place === 0 ? 'wow' : 'happy');
+        } else {
+          const runPose = POSES.run(anim, Math.max(0.25, effA));
+          pose = blendPose(POSES.crouch(1), runPose, runW);
+          if (stumble > 0) pose = blendPose(pose, { ...runPose, lean: 0.95, head: 0.5, shL: 1.6, shR: 1.4, abL: 0.9, abR: 0.9 }, clamp(stumble / 0.35, 0, 1) * 0.8);
+          if (ru.finished && ru.v < 8 && !snap) pose = blendPose(pose, POSES.walk((tt * 0.9) % 1), clamp((8 - ru.v) / 6, 0, 1));
+          ru.fig.setExpression(ru.finished && !snap ? (ru.place === 0 ? 'wow' : 'happy') : 'focus');
+        }
+      }
+      ru.pose = pose;
+      ru.fig.setPose(pose);
+    });
+    this.animateTape(dt, paused);
+    this.crowd.update(tt, this.phase === 'attract' ? 0.1 : this.phase === 'done' ? 0.55 : this.excite);
+    if (!paused) ctx.sound.setLoop('crowd', this.phase === 'attract' ? 0.12 : 0.22 + this.excite * 0.55);
+    this.updateHud(tt);
+    this.applyCamera(dt, snap);
+  }
+
+  sample(t) {
+    const H = this.history;
+    let k = 1;
+    while (k < H.length - 1 && H[k].t < t) k++;
+    const a = H[k - 1], b = H[k];
+    const f = clamp((t - a.t) / Math.max(1e-6, b.t - a.t), 0, 1);
+    return a.s.map((sa, i) => sa.map((v, j) => (j === 1 && Math.abs(b.s[i][j] - v) > 0.5 ? b.s[i][j] : lerp(v, b.s[i][j], f))));
+  }
+
+  animateTape(dt, paused) {
+    if (!this.tapeHalves || paused) return;
+    if (this.tapeT > 1.4) return;
+    this.tapeT += dt;
+    const k = clamp(this.tapeT / 1.1, 0, 1);
+    const ease = 1 - (1 - k) * (1 - k);
+    const z = this.tapeBreakZ;
+    const halves = [[-this.tapeZ, lerp(z, z - 6, ease)], [this.tapeZ, lerp(z, z + 6, ease)]];
+    this.tapeHalves.forEach((h, i) => { h.geometry.dispose(); h.geometry = this.tapeGeometry(halves[i][0], halves[i][1], ease * 9, ease); });
+  }
+
+  updateHud(t) {
+    const ctx = this.ctx;
+    const order = [...this.runners].sort((a, b) => (b.finished - a.finished) || (a.finished && b.finished ? a.tFinish - b.tFinish : b.x - a.x));
+    this.runners.forEach((ru, i) => {
+      let info = '', cls = '';
+      if (ru.cards) info = '🟨 ';
+      if (this.phase === 'race' || this.phase === 'finishing' || this.phase === 'replay' || this.phase === 'done') {
+        info += ru.finished ? `${ORD[ru.place]} · ${ru.time.toFixed(2)}` : ru.heldBack && t < ru.tGo ? 'held back' : ORD[order.indexOf(ru)];
+        cls = ru.finished && ru.place === 0 ? 'active' : '';
+      } else if (ru.heldBack) { info += 'held back'; cls = 'dim'; }
+      ctx.hud.chip(i, info.trim(), cls);
+    });
+    for (const m of this.meters) {
+      const e = m.ru.started && !m.ru.finished ? clamp(m.ru.effort / 1.04, 0, 1) : 0;
+      m.bar.style.width = `${(e * 100).toFixed(1)}%`;
+      const k = e >= 0.92 ? 'rm go' : e >= 0.7 ? 'rm ok' : 'rm';
+      if (k !== m.k) { m.d.className = k; m.k = k; }
+      m.note.classList.toggle('on', m.ru.beat > 0);
+      m.d.style.opacity = this.phase === 'attract' || this.phase === 'done' || this.phase === 'replay' ? '0' : '1';
+    }
+  }
+
+  applyCamera(dt, snap = null) {
+    const R = this.ctx.R, c = this.cam;
+    const P = this.phase, tt = this.ctx.time();
+    let want;
+    if (P === 'attract' || P === 'pre') {
+      want = { x: -2 + Math.sin(tt * 0.12) * 10, y: 4, z: 0, yaw: 0.42 + Math.sin(tt * 0.09) * 0.22, pitch: 0.34, width: 72 };
+    } else if (P === 'walk' || P === 'marks' || P === 'set' || P === 'false') {
+      want = { x: 2, y: 3.5, z: 0, yaw: 0.3 - (P === 'set' ? 0.08 : 0), pitch: 0.42, width: P === 'set' ? 58 : 64 };
+    } else if (P === 'replay' && snap) {
+      // low and close at the finish line, looking across the lanes
+      want = { x: FINISH + 2, y: 3.5, z: -2, yaw: 0.12, pitch: 0.2, width: 54 };
+    } else if (P === 'done') {
+      want = { x: FINISH + 24, y: 4, z: 0, yaw: 0.25 + Math.sin(tt * 0.2) * 0.1, pitch: 0.36, width: 76 };
+    } else {
+      const lx = this.leader ? this.leader.x : 0;
+      const cx = Math.min(lx - 11, FINISH + 4);
+      want = { x: Math.max(cx, 14), y: 4, z: 0, yaw: 0, pitch: 0.58, width: 76 };
+    }
+    const fast = P === 'replay' ? 30 : P === 'race' || P === 'finishing' ? 4 : 1.6;
+    for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], fast, Math.min(dt, 0.1));
+    this.camX = c.x;
+    R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: c.width * 2.2 });
+    R.setFocus(0.48, P === 'race' || P === 'finishing' ? 0.24 : 0.2, 0.9);
+  }
+
+  dispose() {
+    for (const ru of this.runners) ru.fig.dispose();
+    if (this.tapeHalves) for (const h of this.tapeHalves) h.geometry.dispose();
+  }
 }
-export default { id: 'sprint', name: 'Sprint', season: 'Summer', blurb: 'Coming together.', venue: 'Placeholder venue.', how: [{ verb: 'Test', text: 'Placeholder.' }], better: 'lower', create: (ctx) => new Placeholder(ctx) };
+
+// crayon pictures for the wall
+function drawCrayon(p, kind, r) {
+  const scribble = (col, pts, w = 5) => {
+    p.strokeStyle = col; p.lineCap = 'round'; p.lineJoin = 'round';
+    for (let pass = 0; pass < 2; pass++) {
+      p.lineWidth = w * (pass ? 0.6 : 1); p.globalAlpha = pass ? 0.5 : 0.85;
+      p.beginPath(); pts.forEach(([x, y], i) => (i ? p.lineTo(x + (r() - 0.5) * 2, y + (r() - 0.5) * 2) : p.moveTo(x, y))); p.stroke();
+    }
+    p.globalAlpha = 1;
+  };
+  const circle = (cx, cy, rad, n = 24) => Array.from({ length: n + 1 }, (_, i) => [cx + Math.cos((i / n) * Math.PI * 2) * rad, cy + Math.sin((i / n) * Math.PI * 2) * rad]);
+  const fill = (col, cx, cy, rad) => { for (let i = 0; i < 18; i++) scribble(col, [[cx - rad + r() * rad * 2, cy - rad * 0.8 + i * rad / 10], [cx - rad + r() * rad * 2, cy - rad * 0.8 + i * rad / 10 + 3]], 4); };
+  if (kind === 'sun') {
+    fill('#f7c531', 128, 95, 30); scribble('#f0a020', circle(128, 95, 32));
+    for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; scribble('#f0a020', [[128 + Math.cos(a) * 42, 95 + Math.sin(a) * 42], [128 + Math.cos(a) * 64, 95 + Math.sin(a) * 64]]); }
+  } else if (kind === 'house') {
+    fill('#e85d4a', 128, 120, 42); scribble('#b33a2a', [[86, 160], [86, 100], [170, 100], [170, 160], [86, 160]]);
+    scribble('#6b4fc7', [[78, 102], [128, 52], [178, 102]], 6); scribble('#3a7bd5', [[110, 160], [110, 130], [130, 130], [130, 160]]);
+    scribble('#2fae5a', [[20, 172], [236, 172]], 7);
+  } else if (kind === 'runner') {
+    scribble('#2f6fe0', circle(90, 60, 14)); scribble('#2f6fe0', [[90, 74], [100, 118], [80, 160]]); scribble('#2f6fe0', [[100, 118], [128, 150]]); scribble('#2f6fe0', [[94, 90], [70, 108]]); scribble('#2f6fe0', [[94, 90], [124, 80]]);
+    scribble('#e23b2e', [[150, 40], [150, 170]], 6); scribble('#2fae5a', [[20, 172], [236, 172]], 6);
+    for (let i = 0; i < 3; i++) scribble('#f2c230', [[30, 70 + i * 22], [56, 70 + i * 22]]);
+  } else if (kind === 'rainbow') {
+    ['#e23b2e', '#ef7d2c', '#f2c230', '#2fae5a', '#2f6fe0', '#6b4fc7'].forEach((col, i) => scribble(col, Array.from({ length: 21 }, (_, k) => { const a = Math.PI + (k / 20) * Math.PI; return [128 + Math.cos(a) * (96 - i * 9), 168 + Math.sin(a) * (96 - i * 9)]; }), 8));
+  } else if (kind === 'cat') {
+    fill('#ef9a3c', 128, 120, 34); scribble('#b8621f', circle(128, 120, 36)); scribble('#b8621f', [[100, 92], [104, 64], [118, 86]]); scribble('#b8621f', [[138, 86], [152, 64], [156, 92]]);
+    p.fillStyle = '#1f1a17'; p.fillRect(114, 110, 6, 8); p.fillRect(136, 110, 6, 8);
+    scribble('#1f1a17', [[118, 132], [128, 138], [138, 132]], 3); scribble('#b8621f', [[164, 140], [200, 120], [206, 96]], 7);
+  } else {
+    scribble('#2fae5a', [[128, 175], [128, 90]], 6);
+    for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; fill(['#e36aa0', '#f2c230'][i % 2], 128 + Math.cos(a) * 22, 70 + Math.sin(a) * 22, 12); }
+    fill('#f7c531', 128, 70, 10);
+  }
+}
+
+export default {
+  id: 'sprint', name: 'Sprint', season: 'Summer',
+  blurb: 'Four lanes chalked on the playroom floor: react to the whistle, then run with a steady rhythm.',
+  venue: 'Four lanes chalked across the playroom floorboards, finishing at a red wool tape.',
+  loading: 'Chalking the lanes…',
+  how: [
+    { verb: 'Timing', text: 'Wait for the <b>whistle</b>, then go. Moving after <b>Set</b> is a false start.' },
+    { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to run. A steady, quick beat is fastest: mashing faster won\'t help.' },
+  ],
+  better: 'lower',
+  resultsDelay: 0.9,
+  create: (ctx) => new Sprint(ctx),
+};

@@ -108,8 +108,9 @@ export class Game {
   // tests: advance the simulation by `sec` seconds without rendering in between
   simulate(sec) {
     const n = Math.round(sec / STEP);
-    for (let i = 0; i < n; i++) { this.time += STEP; this.ev.update(STEP); if (this.state === 'done' && !this.ev.keepRunning) break; }
-    this.ev.frame(1 / 60, false);
+    for (let i = 0; i < n; i++) { this.time += STEP; this.ev.update(STEP); }
+    // a long step lets cameras and animations settle as they would have during real frames
+    this.ev.frame(Math.max(sec, 1 / 60), false);
   }
 
   unload() {

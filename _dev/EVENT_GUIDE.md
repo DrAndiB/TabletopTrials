@@ -31,7 +31,7 @@ Every event is one file in `js/events/<id>.js`, registered in `js/events/index.j
   `woodTextures`, `mottledTextures`, `feltTextures`, `paint`, `makeCanvas`, `toTexture`, `noiseField`,
   `normalFromHeight`, `labelTexture`). Add everything under `ctx.kit.group`; it is disposed with the event.
 - `js/verbs.js`: `Rhythm` (alternate left/right; `press(side, t)` → 'first' | 'stride' | 'stumble';
-  `effort(t)` 0..1.06 against a target cadence), `timingScore`, `Power`, `Steer`, `BotTapper`
+  `effort(t)` 0..1.04 against a target cadence), `timingScore`, `Power`, `Steer`, `BotTapper`
   (drives a computer player's pad), `CPU_SKILL` presets.
 - `js/fx.js`: `Particles` (dust, flour puffs, chalk) and `SkidMarks`.
 - `js/audio.js` (`ctx.sound`): `whistle`, `block`, `step`, `stumble`, `clack`, `thump`, `puff`, `whoosh`,
@@ -70,7 +70,7 @@ The instance:
 kind, color, dur)`, `flash(text, color)`, `chip(i, info, cls)`), `sound`, `R` (renderer), `THREE`.
 
 ## Fairness rule for rhythm
-Use `Rhythm.effort()`: full effort at the target cadence, at most +6 % above it, and only erratic
+Use `Rhythm.effort()`: full effort at the target cadence, at most +4 % above it, and only erratic
 tapping (coefficient of variation > 0.32) costs anything. Keyboard and touch players must be able
 to reach the same result.
 

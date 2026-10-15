@@ -3,10 +3,10 @@
 import { clamp } from './util.js';
 
 // RHYTHM: alternate left and right. Each alternating press is a stride; pressing the same side twice is a
-// stumble. What counts is a steady cadence near the event's target: above it the gain is small (+6 % at
+// stumble. What counts is a steady cadence near the event's target: above it the gain is small (+4 % at
 // most), so raw tapping speed stops paying off before a touch screen or a tired wrist runs out.
 export class Rhythm {
-  constructor({ target = 6.5, keep = 6 } = {}) {
+  constructor({ target = 6.5, keep = 8 } = {}) {
     this.target = target;     // strides per second that give full effort
     this.keep = keep;         // intervals averaged
     this.reset();
@@ -41,8 +41,9 @@ export class Rhythm {
   cadence(t) {
     const m = this.mean();
     if (!isFinite(m)) return t - this.lastT < 0.5 ? 1.5 : 0;
+    // the beat only fades once the current gap is clearly longer than usual (a real pause)
     const since = t - this.lastT;
-    return 1 / Math.max(m, since);
+    return since > m * 1.5 ? 1 / (since / 1.5) : 1 / m;
   }
   // coefficient of variation of the recent intervals (0 = metronome)
   unsteadiness() {
@@ -53,10 +54,10 @@ export class Rhythm {
     for (const x of this.intervals) v += (x - m) * (x - m);
     return Math.sqrt(v / n) / m;
   }
-  // 0..1.06: share of full running effort
+  // 0..1.04: share of full running effort
   effort(t) {
     const x = this.cadence(t) / this.target;
-    let e = x <= 1 ? x : 1 + 0.06 * (1 - Math.exp(-(x - 1) * 4));
+    let e = x <= 1 ? x : 1 + 0.04 * (1 - Math.exp(-(x - 1) * 5));
     // only really erratic tapping costs anything; normal keyboard and touch jitter does not
     e *= 1 - clamp((this.unsteadiness() - 0.32) * 0.8, 0, 0.25);
     return e;
@@ -97,7 +98,7 @@ export class Steer {
 export const CPU_SKILL = {
   easy: { cadence: 0.8, jitter: 0.16, react: [0.32, 0.5], aim: 0.55, stumble: 0.03 },
   normal: { cadence: 0.92, jitter: 0.11, react: [0.22, 0.36], aim: 0.75, stumble: 0.015 },
-  hard: { cadence: 1.0, jitter: 0.07, react: [0.15, 0.24], aim: 0.9, stumble: 0.005 },
+  hard: { cadence: 0.96, jitter: 0.07, react: [0.15, 0.24], aim: 0.9, stumble: 0.005 },
 };
 
 // Drives a Pad with alternating presses at a cadence (strides/s), with human-like jitter.

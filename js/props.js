@@ -82,22 +82,19 @@ export function banner(code, w = 14, { seed = 1, poleColor = 0xf2c230 } = {}) {
   front.castShadow = true; front.receiveShadow = true;
   g.add(front);
   const pencil = pencilGeometry(poleH);
-  const pm = new THREE.MeshPhysicalMaterial({ color: poleColor, roughness: 0.4, clearcoat: 0.6 });
-  const tipM = new THREE.MeshStandardMaterial({ color: 0xe6c8a0, roughness: 0.8 });
-  for (const sx of [-1, 1]) {
-    const m = new THREE.Mesh(pencil.body, pm);
-    m.position.set(sx * (w / 2 + 0.25), 0, -0.3);
-    m.castShadow = true;
-    g.add(m);
-    const t = new THREE.Mesh(pencil.tip, tipM);
-    t.position.copy(m.position);
-    g.add(t);
-  }
+  const poles = mergeParts([-1, 1].flatMap((sx) => [
+    { geo: pencil.body, color: poleColor, pos: [sx * (w / 2 + 0.25), 0, -0.3], scale: [1, 1, 1] },
+    { geo: pencil.tip, color: 0xe6c8a0, pos: [sx * (w / 2 + 0.25), 0, -0.3], scale: [1, 1, 1] },
+  ]));
+  const pm = poleMat || (poleMat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.45, clearcoat: 0.5 }));
+  const pmesh = new THREE.Mesh(poles, pm);
+  pmesh.castShadow = true;
+  g.add(pmesh);
   g.userData.height = poleH;
   return g;
 }
 
-let pencilCache = null;
+let pencilCache = null, poleMat = null;
 function pencilGeometry(len) {
   if (pencilCache && pencilCache.len === len) return pencilCache;
   const body = new THREE.CylinderGeometry(0.36, 0.36, len - 1.2, 6);
@@ -298,13 +295,43 @@ function letterTexture(letter, color) {
   return t;
 }
 let blockGeo = null;
+// one canvas with six letter faces (3 x 2 cells) so a block is a single draw call
+function blockAtlas(letters, seed) {
+  const key = letters.join('') + ':' + seed;
+  if (blockTex.has(key)) return blockTex.get(key);
+  const S = 128, c = TX.makeCanvas(S * 3, S * 2), g = c.getContext('2d');
+  const r = rng(seed);
+  for (let i = 0; i < 6; i++) {
+    const t = letterTexture(letters[i % letters.length], BLOCK_COLORS[(r() * BLOCK_COLORS.length) | 0]);
+    g.drawImage(t.image, (i % 3) * S, Math.floor(i / 3) * S);
+  }
+  const tex = TX.toTexture(c, { wrap: false });
+  tex.userData.shared = true;
+  blockTex.set(key, tex);
+  return tex;
+}
+function blockGeometry() {
+  if (blockGeo) return blockGeo;
+  const g = new RoundedBoxGeometry(1, 1, 1, 3, 0.08);
+  // RoundedBoxGeometry keeps BoxGeometry's per-face groups and 0..1 UVs: move each face into its atlas cell
+  const uv = g.attributes.uv;
+  for (const [fi, grp] of g.groups.entries()) {
+    const cx = fi % 3, cy = Math.floor(fi / 3);
+    const idx = g.index;
+    for (let k = grp.start; k < grp.start + grp.count; k++) {
+      const v = idx ? idx.getX(k) : k;
+      if (uv.getX(v) > 1.5) continue; // already moved
+      uv.setXY(v, 10 + (cx + Math.min(1, Math.max(0, uv.getX(v)))) / 3, 10 + (1 - (cy + 1) / 2) + Math.min(1, Math.max(0, uv.getY(v))) / 2);
+    }
+  }
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) - 10, uv.getY(i) - 10);
+  g.clearGroups();
+  blockGeo = g;
+  return g;
+}
 // a wooden alphabet block, edge `s`, letters on its sides
 export function letterBlock(letters, s = 6, seed = 1) {
-  if (!blockGeo) blockGeo = new RoundedBoxGeometry(1, 1, 1, 3, 0.08);
-  const r = rng(seed);
-  const mats = [];
-  for (let i = 0; i < 6; i++) mats.push(new THREE.MeshPhysicalMaterial({ map: letterTexture(letters[i % letters.length], BLOCK_COLORS[(r() * BLOCK_COLORS.length) | 0]), roughness: 0.55, clearcoat: 0.4, clearcoatRoughness: 0.4 }));
-  const m = new THREE.Mesh(blockGeo, mats);
+  const m = new THREE.Mesh(blockGeometry(), new THREE.MeshPhysicalMaterial({ map: blockAtlas(letters, seed), roughness: 0.55, clearcoat: 0.4, clearcoatRoughness: 0.4 }));
   m.scale.setScalar(s);
   m.castShadow = true; m.receiveShadow = true;
   return m;
