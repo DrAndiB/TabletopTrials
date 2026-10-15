@@ -1,11 +1,11 @@
 // The events, in the order The Trials plays them, plus the ones still to come (shown greyed out).
 import sprint from './sprint.js';
+import hurdles from './hurdles.js';
 import skijump from './skijump.js';
 
-export const EVENTS = [sprint, skijump];
+export const EVENTS = [sprint, hurdles, skijump];
 
 export const SOON = [
-  { id: 'hurdles', name: 'Hurdles', season: 'Summer', icon: 'hurdles' },
   { id: 'javelin', name: 'Javelin', season: 'Summer', icon: 'javelin' },
   { id: 'biathlon', name: 'Biathlon', season: 'Winter', icon: 'biathlon' },
   { id: 'curling', name: 'Curling', season: 'Winter', icon: 'curling' },

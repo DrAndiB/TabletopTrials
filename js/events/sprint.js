@@ -27,8 +27,10 @@ const blockBoost = (reaction) => VMAX * 0.34 * clamp(1 - (reaction - 0.12) / 0.3
 
 const laneZ = (lane) => (1.5 - lane) * LANE;
 
-class Sprint {
-  constructor(ctx) {
+// Hurdles extends this class: the hooks it uses are onAction, afterMove, runnerPose, tipFor and botExtra.
+export class Sprint {
+  constructor(ctx, opt = {}) {
+    this.vmax = opt.vmax ?? VMAX;
     this.ctx = ctx;
     this.r = ctx.rand;
     this.phase = 'pre';
@@ -512,7 +514,8 @@ class Sprint {
         const pace = BOT_PACE[ctx.skillName] || BOT_PACE.normal;
         const f = ru.zone === 'drive' ? 1 + (DRIVE_TARGET - 1) * pace.drive : ru.zone === 'tired' ? 1 + (FATIGUE_TARGET - 1) * pace.fatigue : 1;
         ru.bot.update(now, ru.botCad * f, ctx.skill.jitter, ctx.skill.stumble);
-        if (!ru.started && ru.botGo != null && now >= ru.botGo) { ru.started = true; ru.reaction = ru.botGo - this.whistleAt; ru.startT = ru.botGo; ru.v = blockBoost(ru.reaction); }
+        if (!ru.started && ru.botGo != null && now >= ru.botGo) { ru.started = true; ru.reaction = ru.botGo - this.whistleAt; ru.startT = ru.botGo; ru.v = blockBoost(ru.reaction) * this.vmax / VMAX; }
+        this.botExtra?.(ru, now);
       }
       for (const e of ctx.presses(i)) {
         if (e.t < ru.tGo) continue; // held back runners wait their half second
@@ -521,8 +524,10 @@ class Sprint {
           if (!e.down && ru.block && !ru.started) {
             ru.started = true; ru.reaction = e.t - this.whistleAt; ru.startT = e.t; ru.v = blockBoost(ru.reaction);
             ctx.sound.step(1, this.pan(ru.x));
+            ru.v *= this.vmax / VMAX;
             if (ru.c.human && ru.reaction < 0.2) ctx.hud.flash(`${ru.c.short}: flying start!`, '#7be495');
           }
+          else if (e.down && ru.started && !ru.finished) this.onAction?.(ru, e.t);
           continue;
         }
         if (!e.down) continue;
@@ -553,12 +558,14 @@ class Sprint {
       }
       if (ru.slipT > 0) ru.slipT -= dt;
       ru.effort = eff;
-      const target = ru.finished ? 0 : VMAX * eff;
+      if (ru.downT > 0) { ru.downT -= dt; eff = 0; }
+      const target = ru.finished ? 0 : this.vmax * eff;
       const k = target > ru.v ? ACCEL : (ru.finished ? 1.4 : DECEL);
       ru.v += (target - ru.v) * (1 - Math.exp(-k * dt));
       if (ru.stumbleT > 0) ru.stumbleT -= dt;
       const x0 = ru.x;
       ru.x += ru.v * dt;
+      this.afterMove?.(ru, x0, now, dt);
       if (!ru.finished && x0 < FINISH && ru.x >= FINISH) {
         const tc = now - dt + ((FINISH - x0) / Math.max(1e-6, ru.x - x0)) * dt;
         this.finishRunner(ru, tc);
@@ -568,7 +575,7 @@ class Sprint {
     }
     this.leader = leader;
     // history for the replay (last 5 s)
-    this.history.push({ t: now, s: this.runners.map((ru) => [ru.x, ru.anim, ru.effortAnim, ru.runW, ru.stumbleT]) });
+    this.history.push({ t: now, s: this.runners.map((ru) => [ru.x, ru.anim, ru.effortAnim, ru.runW, ru.stumbleT, ru.y || 0, ru.jumpU || 0, ru.downT || 0]) });
     while (this.history.length > 600) this.history.shift();
     // crowd excitement builds as the leader nears the line
     const lx = leader ? leader.x : 0;
@@ -627,6 +634,8 @@ class Sprint {
       const notes = [];
       if (ru.reaction != null) notes.push(`reaction ${ru.reaction.toFixed(2)} s`);
       if (ru.cards) notes.push(ru.heldBack ? 'held back after two false starts' : '1 false start');
+      const more = this.resultNote?.(ru);
+      if (more) notes.push(more);
       return { value: ru.time, text: `${ru.time.toFixed(2)} s`, short: `${ru.time.toFixed(2)} s`, sub: notes.join(' · ') };
     });
     ctx.finish(results);
@@ -666,20 +675,20 @@ class Sprint {
         ru.fig.setExpression(P === 'false' ? 'wow' : 'focus');
       } else {
         // racing, finishing, replay, done
-        let x = ru.x, anim, effA, runW, stumble;
-        if (snap) { [x, anim, effA, runW, stumble] = snap[i]; }
+        let x = ru.x, anim, effA, runW, stumble, y = ru.y || 0, jumpU = ru.jumpU || 0, down = ru.downT || 0;
+        if (snap) { [x, anim, effA, runW, stumble, y, jumpU, down] = snap[i]; }
         else {
           if (!paused) {
             const cad = ru.started ? Math.min(9, ru.rhythm.cadence(tt)) : 0;
             const moving = ru.v > 1.5;
             ru.anim = (ru.anim + (moving ? Math.max(cad, ru.v / 6) : 0) * 0.5 * dt) % 1;
-            ru.effortAnim = damp(ru.effortAnim, clamp(ru.v / VMAX, 0, 1.1), 6, dt);
+            ru.effortAnim = damp(ru.effortAnim, clamp(ru.v / this.vmax, 0, 1.1), 6, dt);
             ru.runW = ru.started ? clamp(ru.runW + dt * 3, 0, 1) : 0;
             ru.beat = Math.max(0, ru.beat - dt);
           }
           anim = ru.anim; effA = ru.effortAnim; runW = ru.runW; stumble = ru.stumbleT;
         }
-        ru.fig.root.position.set(x, 0, ru.z);
+        ru.fig.root.position.set(x, y, ru.z);
         ru.fig.root.rotation.y = Math.PI / 2;
         if (this.phase === 'done' && ru.finished && ru.v < 3) {
           const w = this.t + ru.idle;
@@ -692,6 +701,7 @@ class Sprint {
           if (stumble > 0) pose = blendPose(pose, { ...runPose, lean: 0.95, head: 0.5, shL: 1.6, shR: 1.4, abL: 0.9, abR: 0.9 }, clamp(stumble / 0.35, 0, 1) * 0.8);
           if (ru.finished && ru.v < 8 && !snap) pose = blendPose(pose, POSES.walk((tt * 0.9) % 1), clamp((8 - ru.v) / 6, 0, 1));
           ru.fig.setExpression(ru.finished && !snap ? (ru.place === 0 ? 'wow' : 'happy') : 'focus');
+          if (this.runnerPose) pose = this.runnerPose(ru, pose, jumpU, down, tt);
         }
       }
       ru.pose = pose;
@@ -747,7 +757,7 @@ class Sprint {
       const tip = ph === 'walk' || ph === 'marks' || ph === 'false' ? `hold ${touch ? '●' : 'action'} in the blocks`
         : ph === 'set' ? (ru.block ? 'let go on GO!' : `hold ${touch ? '●' : 'action'}!`)
           : !ru.started ? (ru.block ? 'let go!' : `${touch ? '◀ ▶' : 'left, right'}…`)
-            : ru.finished ? '' : ru.zone === 'drive' ? (fast ? 'easy! smooth steps' : 'drive: smooth steps') : ru.zone === 'top' ? 'top speed: keep the beat' : 'dig in: a bit faster!';
+            : ru.finished ? '' : (this.tipFor?.(ru) ?? (ru.zone === 'drive' ? (fast ? 'easy! smooth steps' : 'drive: smooth steps') : ru.zone === 'top' ? 'top speed: keep the beat' : 'dig in: a bit faster!'));
       if (tip !== m.tipText) { m.tip.textContent = tip; m.tipText = tip; }
       const zi = ru.zone === 'drive' ? 0 : ru.zone === 'top' ? 1 : 2;
       m.zones.forEach((z, n) => z.classList.toggle('on', ru.started && n <= zi));
