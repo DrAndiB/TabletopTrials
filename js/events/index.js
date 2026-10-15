@@ -3,12 +3,12 @@ import sprint from './sprint.js';
 import hurdles from './hurdles.js';
 import javelin from './javelin.js';
 import skijump from './skijump.js';
+import curling from './curling.js';
 
-export const EVENTS = [sprint, hurdles, javelin, skijump];
+export const EVENTS = [sprint, hurdles, javelin, skijump, curling];
 
 export const SOON = [
   { id: 'biathlon', name: 'Biathlon', season: 'Winter', icon: 'biathlon' },
-  { id: 'curling', name: 'Curling', season: 'Winter', icon: 'curling' },
 ];
 
 export function eventById(id) { return EVENTS.find((e) => e.id === id) || EVENTS[0]; }
