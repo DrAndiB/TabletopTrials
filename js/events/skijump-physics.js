@@ -62,7 +62,7 @@ export function xAtMetres(m) { let x = 0; while (x < 300 && metresAt(x) < m) x +
 // st: { s, v, wobble, bias }; input: { steer -1..1 }
 // Balance drifts: a slowly wandering lean (bias) pulls the jumper off centre and LEFT/RIGHT push back.
 // Nothing falls over; an untidy tuck just costs speed, a tidy one keeps it.
-export const INRUN = { friction: 0.035, drag: 0.00021, wobbleBrake: 7, biasRate: 0.3, biasNoise: 1.05, biasMax: 0.95, follow: 2.4, steer: 2.3, jitter: 0.25 };
+export const INRUN = { friction: 0.035, drag: 0.00021, wobbleBrake: 7, biasRate: 0.3, biasNoise: 1.05, biasMax: 0.95, follow: 2.4, steer: 2.3, jitter: 0.06 };
 export function stepInrun(st, dt, input, n1, n2) {
   const p = inrunAt(st.s);
   const sin = -Math.sin(p.ang), cos = Math.cos(p.ang);

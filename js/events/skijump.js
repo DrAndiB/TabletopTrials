@@ -81,6 +81,7 @@ class SkiJump {
       this.jumpers.push(j);
     });
     this.placeWaiting(true);
+    this.buildGustSign(K);
     this.buildHud();
     this.applyCamera(1);
   }
@@ -563,6 +564,29 @@ class SkiJump {
     });
   }
 
+  // a sign that pops up next to the jumper when a gust is coming: which way to lean, and the wind
+  buildGustSign(K) {
+    const draw = (dir) => {
+      const c = K.TX.makeCanvas(256), g = c.getContext('2d');
+      g.fillStyle = '#ffc93c'; g.strokeStyle = '#1f1a17'; g.lineWidth = 10;
+      g.beginPath(); g.arc(128, 128, 112, 0, Math.PI * 2); g.fill(); g.stroke();
+      g.save(); g.translate(128, 128); g.scale(dir, 1);
+      // the arrow: which way to lean (left = back, right = forward)
+      g.fillStyle = '#1f1a17';
+      g.beginPath(); g.moveTo(-78, 0); g.lineTo(-18, -54); g.lineTo(-18, -22); g.lineTo(40, -22); g.lineTo(40, 22); g.lineTo(-18, 22); g.lineTo(-18, 54); g.closePath(); g.fill();
+      // the wind, coming from the other side
+      g.strokeStyle = '#ffffff'; g.lineWidth = 9; g.lineCap = 'round';
+      for (const [y, l] of [[-40, 34], [0, 44], [40, 34]]) { g.beginPath(); g.moveTo(96, y); g.lineTo(96 - l * 0.4, y); g.stroke(); }
+      g.restore();
+      return K.TX.toTexture(c, { wrap: false });
+    };
+    this.gustTex = { back: draw(1), fwd: draw(-1) };
+    this.gustSign = new THREE.Mesh(new THREE.PlaneGeometry(7, 7), new THREE.MeshBasicMaterial({ map: this.gustTex.back, transparent: true, depthWrite: false }));
+    this.gustSign.visible = false;
+    this.gustSign.renderOrder = 5;
+    K.group.add(this.gustSign);
+  }
+
   buildHud() {
     const el = this.ctx.hud.el;
     const style = document.createElement('style');
@@ -931,6 +955,14 @@ class SkiJump {
     this.crowd.update(tt, lvl);
     for (const jj of this.judges) jj.a.update(tt, jj.up ? 0.25 : 0);
     if (!paused) ctx.sound.setLoop('crowd', 0.2 + lvl * 0.5);
+    const sign = this.gustSign, f = this.flight;
+    sign.visible = !!(warn && f && this.phase === 'flight');
+    if (sign.visible) {
+      sign.material.map = warn.amp > 0 ? this.gustTex.back : this.gustTex.fwd;
+      sign.position.set(f.x + 3, f.y + 9, 2);
+      sign.scale.setScalar(1 + 0.12 * Math.sin(tt * 14));
+      sign.quaternion.copy(ctx.R.camera.quaternion);
+    }
     this.updateHud(warn);
     this.applyCamera(dt);
   }
@@ -993,7 +1025,8 @@ class SkiJump {
         : ph === 'gate' ? `Tap ${tapKey} to go` : this.tap != null ? 'Jump!' : d <= P.ARMED + 6 ? `Tap ${tapKey} in the green!` : 'Keep your balance';
       const lab = this.hudGauge.querySelectorAll('.lab span');
       lab[0].textContent = flying ? '◀ back' : '◀ left'; lab[1].textContent = flying ? 'forward ▶' : 'right ▶';
-      this.hudGauge.querySelector('.g i').style.left = `${clamp(50 + v * 42, 2, 98)}%`;
+      this.gaugeV = this.gaugeV == null ? v : this.gaugeV + (v - this.gaugeV) * 0.3;
+      this.hudGauge.querySelector('.g i').style.left = `${clamp(50 + this.gaugeV * 42, 2, 98)}%`;
       // the arrows show which way to push for an announced gust
       const ems = this.hudGauge.querySelectorAll('.g em');
       ems[0].classList.toggle('on', !!(flying && warn && warn.amp > 0));
@@ -1022,14 +1055,17 @@ class SkiJump {
     let want;
     if (ph === 'gate' || ph === 'pre') {
       const p = P.inrunAt(P.START_S);
-      want = { x: p.x + 26, y: p.y - 16, z: 0, yaw: 0.16, pitch: 0.2, width: 100 };
+      want = { x: p.x + 12, y: p.y - 5, z: 0, yaw: 0.2, pitch: 0.2, width: 58 };
     } else if (ph === 'inrun') {
       const p = P.inrunAt(this.inrun.s);
-      want = { x: p.x + 22, y: p.y - 11, z: 0, yaw: 0.12, pitch: 0.2, width: 92 };
+      want = { x: p.x + 11, y: p.y - 4, z: 0, yaw: 0.15, pitch: 0.18, width: 50 };
     } else if (ph === 'flight') {
       const f = this.flight;
-      const ahead = Math.max(f.x + 34, 60);
-      want = { x: (f.x + ahead) / 2, y: (f.y + P.hillY(ahead)) / 2, z: 0, yaw: 0.1, pitch: 0.34, width: 124 };
+      // close on the jumper in the air; pull back just before the landing to show the distance lines
+      const tc = this.timeToContact();
+      const k = clamp((1.1 - tc) / 0.6, 0, 1);
+      const ahead = f.x + 20;
+      want = { x: f.x + 9 + 7 * k, y: (f.y - 2) * (1 - k) + ((f.y + P.hillY(ahead)) / 2) * k, z: 0, yaw: 0.12, pitch: 0.22 + 0.1 * k, width: 58 + 46 * k };
     } else if (ph === 'landed') {
       const L = this.land;
       want = { x: Math.min(L.x + 14, 214), y: Math.max(14, P.hillY(L.x) + 6), z: -14, yaw: 0.16, pitch: 0.26, width: 124 };
