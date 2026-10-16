@@ -14,11 +14,11 @@ animals cheer from cardboard-box stands. Sibling of [Tabletop Turbo](https://git
 | Event | Season | How it plays |
 |---|---|---|
 | Sprint | Summer | Hold action in the blocks and let go on the whistle; tap left and right in turn to run: smooth out of the blocks, a steady beat, a little faster at the end. |
-| Hurdles | Summer | The sprint with ten pencil-and-domino hurdles per lane: tap action to jump at the chalk mark. |
+| Hurdles | Summer | Two buttons: tap left or right on a steady beat to run, action to jump; at the beat it's tap, tap, tap, tap, jump at the chalk mark before each pencil-and-domino hurdle. |
 | Javelin | Summer | A pencil down the living-room rug: rhythm run-up, hold action to draw back, let go at 30-40° before the red line. Three throws. |
 | Ski jump | Winter | Down an ironing board onto a cushion mountain: tap to start, keep your balance, tap in the green zone, lean against announced fan gusts, tap at LAND! for a telemark. Two jumps. |
 | Curling | Winter | Bottle caps down the kitchen table: aim (they curl back to the middle), hold for strength, sweep with a toothbrush in rhythm. |
-| Biathlon | Winter | Mass start round the coffee table: skate, take the cushion climb steady, tuck downhill, steer the curve, then shoot five bottle caps; each miss is a penalty loop. |
+| Biathlon | Winter | Three laps round the coffee table, over a sofa cushion and through felt fir trees: easy beat on the flat, harder uphill, tuck downhill but stand up before the curve; after laps 1 and 2 the stadium fork leads to the range (steer the drifting sight onto five caps), after lap 3 to the finish. |
 
 Default keys: P1 ← → ↑ · P2 A D W · P3 J L I · P4 Num 4, Num 6, Num 8 (all can be changed under Keys).
 
