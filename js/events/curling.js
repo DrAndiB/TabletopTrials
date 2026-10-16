@@ -15,7 +15,7 @@ const R = 1.6;                 // a bottle cap
 const HOG = 45, TEE = 140, BACK = 154, SIDE = 15;
 const RINGS = [[2.6, 3], [6.6, 2], [11, 1]];
 const REL_X = 8;               // where the cap leaves the hand
-const DECEL = 13, SWEEP = 0.16, V_MIN = 30, V_MAX = 76, CURL = 4.5, AIM_MAX = 10;
+const DECEL = 6.2, SWEEP = 0.16, V_MIN = 21, V_MAX = 52, CURL = 2.15, AIM_MAX = 10;
 const SWEEP_TARGET = 6;        // taps per second for full sweeping
 const ORD = ['1st', '2nd', '3rd', '4th'];
 // computer curlers: how far off their aim and strength are, and how well they judge the sweep
@@ -36,7 +36,7 @@ function slide(s, dt, sweep) {
   s.vx = ux * nv; s.vz = uz * nv;
   if (s.curl) {
     // sideways push, perpendicular to the path
-    const al = s.curl * CURL * (1 - 0.5 * sweep) / (1 + nv / 15);
+    const al = s.curl * CURL * (1 - 0.5 * sweep) / (1 + nv / 10.3);
     s.vx -= uz * al * dt;
     s.vz += ux * al * dt;
   }
@@ -201,6 +201,13 @@ class Curling {
     a.beginPath(); a.moveTo(224, 8); a.lineTo(256, 32); a.lineTo(224, 56); a.fill();
     this.arrow = new THREE.Mesh(new THREE.PlaneGeometry(60, 5).rotateX(-Math.PI / 2).translate(30, 0, 0), new THREE.MeshBasicMaterial({ map: K.TX.toTexture(ac, { wrap: false }), transparent: true, depthWrite: false }));
     this.arrow.position.set(REL_X, 0.12, 0); g.add(this.arrow);
+    // where the sliding cap will stop: a ring that moves on while you sweep
+    this.stopRing = new THREE.Mesh(new THREE.RingGeometry(1.3, 2.1, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false }));
+    this.stopDot = new THREE.Mesh(new THREE.CircleGeometry(0.45, 16).rotateX(-Math.PI / 2), this.stopRing.material);
+    this.stopRing.add(this.stopDot);
+    this.stopRing.visible = false;
+    this.stopRing.position.y = 0.08;
+    g.add(this.stopRing);
   }
 
   buildCrowd(K, competitors) {
@@ -228,13 +235,13 @@ class Curling {
       .cu-g{position:absolute;left:50%;bottom:calc(18px + var(--tb,0px));transform:translateX(-50%);width:min(400px,84vw);background:rgba(255,244,220,.95);border:3px solid #1f1a17;border-radius:14px;box-shadow:0 3px 0 #1f1a17;padding:6px 12px 8px;font:800 12px/1.2 Rubik,sans-serif;color:#1f1a17;text-align:center}
       .cu-g .row{display:grid;grid-template-columns:62px 1fr;gap:8px;align-items:center;margin-top:5px;text-align:left;color:#4a413a}
       .cu-g .bar{position:relative;height:12px;border:2px solid #1f1a17;border-radius:99px;background:#fff;overflow:hidden}
-      .cu-g .bar i{position:absolute;inset:0 auto 0 0;width:0;background:#ef7d2c}.cu-g .bar.go i{background:#2fae5a}
+      .cu-g .bar i{position:absolute;inset:0 auto 0 0;width:0;background:#ef7d2c}.cu-g .bar.go i{background:#2fae5a}.cu-g .bar b{position:absolute;top:-3px;bottom:-3px;width:5px;margin-left:-2.5px;background:#f2c230;border:1.5px solid #1f1a17;border-radius:2px}
       .cu-pts{position:absolute;transform:translate(-50%,-100%);font:400 22px "Lilita One",Impact,sans-serif;color:#fff;-webkit-text-stroke:2px #1f1a17;paint-order:stroke fill;pointer-events:none}
       .cu-hidden{display:none}`;
     el.appendChild(style);
     const mk = (cls, html) => { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; el.appendChild(d); return d; };
     this.hudCard = mk('cu-card', '<div class="who"></div><div class="rd"></div><ol></ol>');
-    this.hudG = mk('cu-g cu-hidden', '<div class="tip"></div><div class="row pw"><span>Strength</span><div class="bar"><i></i></div></div><div class="row sw"><span>Sweeping</span><div class="bar"><i></i></div></div>');
+    this.hudG = mk('cu-g cu-hidden', '<div class="tip"></div><div class="row pw"><span>Strength</span><div class="bar"><i></i><b title="reaches the middle"></b></div></div><div class="row sw"><span>Sweeping</span><div class="bar"><i></i></div></div>');
     this.ptsEl = mk('cu-layer', '');
     if (this.ctx.competitors.some((c) => c.type === 'touch')) this.hudG.style.setProperty('--tb', '110px');
   }
@@ -276,8 +283,26 @@ class Curling {
     p.fig.setExpression('focus');
     if (p.bot) this.planBot(p);
     this.ctx.competitors.forEach((c, i) => this.ctx.hud.chip(i, `${this.players[i].total} pts`, i === p.i ? 'active' : ''));
-    if (p.c.human) this.ctx.hud.message(`${p.c.short}: aim with ${p.c.type === 'touch' ? '◀ ▶' : 'left/right'}`, 'small', '#fff', 2);
+    if (p.c.human) this.ctx.hud.message(`${p.c.short}: your cap!`, 'small', '#fff', 1.5);
+    else if (this.throwNo > 0) this.ctx.hud.message('');
     this.updateCard();
+  }
+
+  // the strength that brings a lone cap to rest at x (with the current aim, no sweeping)
+  powerFor(x) {
+    let lo = 0, hi = 1;
+    for (let k = 0; k < 14; k++) { const m = (lo + hi) / 2; if (restingPoint(this.aim, m, 0).x < x) lo = m; else hi = m; }
+    return (lo + hi) / 2;
+  }
+
+  // where the sliding cap will stop if the sweeping carries on like this (collisions aside)
+  predictStop() {
+    const s = this.thrown;
+    if (!s || !s.live) return null;
+    const q = { x: s.x, z: s.z, vx: s.vx, vz: s.vz, curl: s.curl };
+    const e = this.sweep.effort;
+    for (let k = 0; k < 600 && slide(q, 1 / 30, e); k++);
+    return q;
   }
 
   // ---------------------------------------------------------------- computer curlers
@@ -344,7 +369,7 @@ class Curling {
     if (this.phase === 'aim') {
       const held = ctx.held(p.i);
       this.aim = clamp(this.aim + ((held.right ? 1 : 0) - (held.left ? 1 : 0)) * 7 * dt, -AIM_MAX, AIM_MAX);
-      if (q.some((e) => e.b === 'action' && e.down)) { this.phase = 'power'; this.t = 0; this.power = 0; this.powerDir = 1; ctx.sound.pop(); }
+      if (q.some((e) => e.b === 'action' && e.down)) { this.phase = 'power'; this.t = 0; this.power = 0; this.powerDir = 1; ctx.sound.pop(); this.midPower = this.powerFor(TEE); }
       if (this.t > 15) { this.phase = 'power'; this.t = 0; }
     } else if (this.phase === 'power') {
       // the strength meter swings up and down while ACTION is held
@@ -374,6 +399,7 @@ class Curling {
     this.thrown = s;
     this.phase = 'slide'; this.t = 0;
     ctx.sound.whoosh(0.6);
+    ctx.hud.message('');
     ctx.sound.setLoop('hiss', 0.4, 3000);
   }
 
@@ -503,6 +529,13 @@ class Curling {
         d.style.left = `${(v.x * 0.5 + 0.5) * el.clientWidth}px`; d.style.top = `${(-v.y * 0.5 + 0.5) * el.clientHeight}px`;
       });
     }
+    const stop = this.phase === 'slide' ? this.predictStop() : null;
+    this.stopRing.visible = !!stop;
+    if (stop) {
+      this.stopRing.position.x = stop.x; this.stopRing.position.z = stop.z;
+      this.stopRing.material.color.set(this.thrown.owner.c.paint.shirt);
+      this.stopRing.scale.setScalar(1 + 0.1 * Math.sin(tt * 8));
+    }
     this.crowd.update(tt, this.phase === 'slide' ? 0.5 : this.phase === 'scored' ? 0.7 : 0.15);
     this.updateHud();
     this.applyCamera(dt);
@@ -528,23 +561,34 @@ class Curling {
       this.holdBrush(p, false);
       return;
     }
-    // sweeping in front of the cap
+    // sweeping: alongside the cap, facing its path, scrubbing the table just in front of it
     const s = this.thrown;
     const sx = s ? Math.min(s.x, BACK) : 10, sz = s ? s.z : 0;
-    const tx = this.phase === 'slide' ? sx + 3.5 : sx - 4, tz = sz + 4.5;
+    const tx = this.phase === 'slide' ? sx + 3 : sx - 4, tz = sz + 3.8;
     const cur = fig.root.position;
-    const nx = damp(cur.x, tx, 5, dt), nz = damp(cur.z, tz, 5, dt);
+    const nx = damp(cur.x, tx, 6, dt), nz = damp(cur.z, tz, 6, dt);
     const sp = Math.hypot(nx - cur.x, nz - cur.z) / Math.max(dt, 1e-3);
     fig.root.position.set(nx, 0, nz);
-    fig.root.rotation.y = Math.PI / 2 + 0.5;
-    if (!paused) this.sweep.anim = (this.sweep.anim + Math.max(sp / 8, 0.5) * dt) % 1;
-    const sweeping = this.phase === 'slide' && this.sweep.effort > 0.2;
-    const run = POSES.run(this.sweep.anim, clamp(sp / 30, 0.2, 0.8));
-    const sw = Math.sin((tt * SWEEP_TARGET) * Math.PI);
-    const pose = sweeping ? { ...run, lean: 0.8, shR: 1.0 + sw * 0.35, shL: 0.9 - sw * 0.35, elR: 0.5, elL: 0.6, abL: 0.2, abR: 0.1 } : blendPose(run, POSES.stand(tt), clamp(1 - sp / 10, 0, 1));
+    const sweeping = this.phase === 'slide' && this.sweep.effort > 0.15;
+    fig.root.rotation.y = damp(fig.root.rotation.y, this.phase === 'slide' ? Math.PI : Math.PI / 2, 6, dt);
+    if (!paused) this.sweep.anim = (this.sweep.anim + Math.max(sp / 10, 0.4) * dt) % 1;
+    const ph = tt * SWEEP_TARGET * 0.5;
+    const sw = Math.sin(ph * Math.PI * 2);
+    // a sideways shuffle, bent over the brush, shoulders swinging with each stroke
+    const shuffle = POSES.walk(this.sweep.anim);
+    const pose = sweeping
+      ? { ...shuffle, y: -0.5, lean: 0.75, twist: sw * 0.35, head: -0.2, hipL: shuffle.hipL * 0.5 + 0.35, hipR: shuffle.hipR * 0.5 + 0.35, kneeL: 0.6, kneeR: 0.6, shL: 1.1, shR: 1.0, elL: 0.5, elR: 0.3, abL: 0.15, abR: 0.1 }
+      : blendPose(shuffle, POSES.stand(tt), clamp(1 - sp / 10, 0, 1));
     fig.setPose(pose);
-    this.holdBrush(p, sweeping, tt * SWEEP_TARGET * 0.5);
-    if (sweeping && !paused && Math.random() < 0.4) this.particles.emit(fig.root.position.x + 2, 0.3, fig.root.position.z - 2, { vx: 2, spread: 2, up: 1, color: 0xffffff, size: 0.5, life: 0.3, alpha: 0.4, grav: 3, n: 1 });
+    if (sweeping && s) {
+      fig.root.updateMatrixWorld(true);
+      const hand = fig.arms[1].el.localToWorld(new THREE.Vector3(0, -1.1, 0));
+      const floor = new THREE.Vector3(sx + 2.6 + sw * 1.3, 0.3, sz);
+      const dir = floor.clone().sub(hand).normalize();
+      p.brush.position.copy(hand);
+      p.brush.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      if (!paused && Math.random() < 0.5) this.particles.emit(floor.x, 0.3, floor.z, { vx: 0, spread: 2.5, up: 1, color: 0xffffff, size: 0.45, life: 0.3, alpha: 0.5, grav: 3, n: 1 });
+    } else this.holdBrush(p, false);
   }
 
   updateHud() {
@@ -553,12 +597,15 @@ class Curling {
     this.hudG.classList.toggle('cu-hidden', !show);
     if (!show) return;
     const touch = p.c.type === 'touch';
-    const tip = ph === 'aim' ? `${touch ? '◀ ▶' : 'left/right'} to aim (it curls back to the middle) · hold ${touch ? '●' : 'action'} for strength`
-      : ph === 'power' ? 'let go at the right strength!' : `sweep: ${touch ? '◀ ▶' : 'left, right'} in turn to carry it further`;
+    const tip = ph === 'aim' ? `${touch ? '◀ ▶' : 'left/right'} aim · hold ${touch ? '●' : 'action'} for strength`
+      : ph === 'power' ? 'let go at the yellow mark to reach the middle' : `sweep ${touch ? '◀ ▶' : 'left, right'}: the ring shows where it stops`;
     this.hudG.querySelector('.tip').textContent = tip;
     const pw = this.hudG.querySelector('.pw'), sw = this.hudG.querySelector('.sw');
     pw.style.display = ph === 'slide' ? 'none' : ''; sw.style.display = ph === 'slide' ? '' : 'none';
     pw.querySelector('i').style.width = `${(this.power * 100).toFixed(0)}%`;
+    const mark = pw.querySelector('b');
+    mark.style.display = ph === 'power' && this.midPower != null ? '' : 'none';
+    if (this.midPower != null) mark.style.left = `${(this.midPower * 100).toFixed(1)}%`;
     sw.querySelector('i').style.width = `${(this.sweep.effort * 100).toFixed(0)}%`;
     sw.querySelector('.bar').classList.toggle('go', this.sweep.effort > 0.85);
   }
@@ -573,8 +620,18 @@ class Curling {
       Object.assign(c, { x: 62, y: 0, z: 0, yaw: -Math.PI / 2 + 0.12, pitch: 0.5, width: 90 });
       return;
     }
-    if (ph === 'slide' && this.thrown) { const s = this.thrown; want = { x: clamp(s.x + 22, 60, TEE - 8), y: 0, z: 0, yaw: -Math.PI / 2 + 0.12, pitch: 0.5, width: 90 }; }
-    else if (ph === 'settle' || ph === 'scored') want = { x: TEE - 6, y: 0, z: 0, yaw: -Math.PI / 2 + 0.2, pitch: 0.95, width: 52 };
+    if (ph === 'slide' && this.thrown) {
+      // follow just behind the cap, looking down the table towards where it will stop
+      const s = this.thrown, ch = this.chase || (this.chase = { x: s.x, z: s.z });
+      const k = Math.min(dt, 0.1);
+      ch.x = damp(ch.x, Math.min(s.x, TEE + 4), 4, k); ch.z = damp(ch.z, s.z * 0.6, 3, k);
+      RR.look(ch.x - 34, 25, ch.z, Math.min(ch.x + 24, TEE + 2), -5, ch.z, 170);
+      RR.setFocus(0.5, 0.36, 0.7);
+      Object.assign(c, { x: Math.min(ch.x + 10, TEE), y: 0, z: ch.z, yaw: -Math.PI / 2 + 0.1, pitch: 0.55, width: 70 });
+      return;
+    }
+    this.chase = null;
+    if (ph === 'settle' || ph === 'scored') want = { x: TEE - 6, y: 0, z: 0, yaw: -Math.PI / 2 + 0.2, pitch: 0.95, width: 52 };
     else want = { x: 20, y: 4, z: -18, yaw: 0.3, pitch: 0.35, width: 80 };
     const rate = ph === 'slide' ? 3 : 2.4;
     for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], rate, Math.min(dt, 0.1));
