@@ -24,7 +24,7 @@ const MEDAL = ['gold', 'silver', 'bronze'];
 
 const touchFirst = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
 const defaults = {
-  mode: 'trials', event: EVENTS[0].id, skill: 'normal', quality: 'auto', fps: 60,
+  mode: 'trials', event: EVENTS[0].id, trials: EVENTS.map((e) => e.id), skill: 'normal', quality: 'auto', fps: 60,
   teams: DEFAULTS.map((code, i) => ({ type: i === 0 ? (touchFirst ? 'touch' : 'keys') : 'cpu', code })),
 };
 let settings = loadSettings();
@@ -36,6 +36,8 @@ function loadSettings() {
       out.teams = s.teams.map((t, i) => ({ type: TYPES.includes(t.type) ? t.type : 'cpu', code: countryByCode(t.code).code || DEFAULTS[i] }));
       if (!['trials', 'single'].includes(out.mode)) out.mode = 'trials';
       if (!EVENTS.some((e) => e.id === out.event)) out.event = EVENTS[0].id;
+      out.trials = Array.isArray(s.trials) ? s.trials.filter((id) => EVENTS.some((e) => e.id === id)) : EVENTS.map((e) => e.id);
+      if (!out.trials.length) out.trials = EVENTS.map((e) => e.id);
       return out;
     }
   } catch (e) { /* ignore */ }
@@ -127,10 +129,20 @@ function renderSetup() {
   for (const ev of EVENTS) {
     const b = document.createElement('button');
     const rec = recordFor(ev.id);
-    b.className = 'event-card' + (!trials && settings.event === ev.id ? ' selected' : '') + (trials ? ' in-trials' : '');
+    const inT = settings.trials.includes(ev.id);
+    b.className = 'event-card' + (!trials && settings.event === ev.id ? ' selected' : '') + (trials ? (inT ? ' in-trials' : ' out') : '');
     b.innerHTML = `${eventIcon(ev.id)}<span class="ev-name">${ev.name}</span><span class="ev-tag">${ev.season}</span>${rec ? `<span class="rec" title="House record: ${rec.name}">${rec.text}</span>` : ''}`;
     b.title = `${ev.name}: ${ev.blurb}`;
-    b.onclick = () => { sound.click(); settings.event = ev.id; settings.mode = 'single'; saveSettings(); renderSetup(); };
+    // in The Trials a tap adds or removes the event; in One event it picks it
+    b.onclick = () => {
+      sound.click();
+      if (settings.mode === 'trials') {
+        const on = settings.trials.includes(ev.id);
+        if (on && settings.trials.length > 1) settings.trials = settings.trials.filter((id) => id !== ev.id);
+        else if (!on) settings.trials = EVENTS.map((e) => e.id).filter((id) => id === ev.id || settings.trials.includes(id));
+      } else settings.event = ev.id;
+      saveSettings(); renderSetup();
+    };
     el.appendChild(b);
   }
   for (const ev of SOON) {
@@ -139,9 +151,13 @@ function renderSetup() {
     b.innerHTML = `${eventIcon(ev.icon)}<span class="ev-name">${ev.name}</span><span class="ev-tag">Coming soon</span>`;
     el.appendChild(b);
   }
+  const picked = trialsEvents();
   $('#mode-help').textContent = trials
-    ? `The Trials: ${EVENTS.map((e) => e.name.toLowerCase()).join(', then ')}. Medals in every event, and the medal table crowns the champions.`
+    ? `The Trials: ${picked.length} event${picked.length > 1 ? 's' : ''}, about ${Math.max(2, Math.round(picked.length * 2.5))} minutes. Tap an event to add or take it out. Medals in every event, and the medal table crowns the champions.`
     : `One event: ${eventById(settings.event).name}. ${eventById(settings.event).blurb}`;
+  $('#trials-pick').hidden = !trials;
+  const preset = (ids) => ids.length === picked.length && ids.every((id) => picked.includes(id));
+  for (const b of document.querySelectorAll('#trials-pick button')) b.classList.toggle('on', b.dataset.pick !== 'quick' && preset(presetIds(b.dataset.pick)));
   for (const b of document.querySelectorAll('[data-opt]')) b.classList.toggle('on', String(settings[b.dataset.opt]) === b.dataset.val);
 }
 
@@ -154,6 +170,21 @@ for (const el of document.querySelectorAll('[data-opt]')) {
     saveSettings(); renderSetup();
   });
 }
+// The Trials: the picked events, in the order of the list (summer first, then winter)
+function trialsEvents() { return EVENTS.map((e) => e.id).filter((id) => settings.trials.includes(id)); }
+function presetIds(kind) {
+  if (kind === 'summer' || kind === 'winter') return EVENTS.filter((e) => e.season.toLowerCase() === kind).map((e) => e.id);
+  if (kind === 'quick') {
+    // two summer and two winter events, picked at random
+    const pick = (season) => EVENTS.filter((e) => e.season === season).map((e) => e.id).sort(() => Math.random() - 0.5).slice(0, 2);
+    return [...pick('Summer'), ...pick('Winter')];
+  }
+  return EVENTS.map((e) => e.id);
+}
+for (const b of document.querySelectorAll('#trials-pick button')) {
+  b.addEventListener('click', () => { sound.click(); settings.trials = presetIds(b.dataset.pick); saveSettings(); renderSetup(); });
+}
+
 function applyQuality(q) {
   quality = q;
   if (q === 'auto') Perf.forgetTier();
@@ -270,7 +301,7 @@ function startRun() {
   sound.ensure();
   const competitors = competitorsFromTeams();
   if (!competitors.length) return;
-  const events = settings.mode === 'trials' ? EVENTS.map((e) => e.id) : [settings.event];
+  const events = settings.mode === 'trials' ? trialsEvents() : [settings.event];
   run = { events, index: 0, competitors, tally: Object.fromEntries(competitors.map((c) => [c.slot, [0, 0, 0]])), seed: (Math.random() * 1e6) | 0 };
   loadEvent();
 }
@@ -561,7 +592,8 @@ function frame(now) {
     if (params.get('mode')) settings.mode = params.get('mode');
     if (params.get('skill')) settings.skill = params.get('skill');
     const competitors = competitorsFromTeams();
-    run = { events: settings.mode === 'trials' ? EVENTS.map((e) => e.id) : [settings.event], index: 0, competitors, tally: Object.fromEntries(competitors.map((c) => [c.slot, [0, 0, 0]])), seed: +(params.get('seed') || 11) };
+    if (params.get('trials')) settings.trials = params.get('trials').split(',');
+    run = { events: settings.mode === 'trials' ? trialsEvents() : [settings.event], index: 0, competitors, tally: Object.fromEntries(competitors.map((c) => [c.slot, [0, 0, 0]])), seed: +(params.get('seed') || 11) };
     const def = eventById(run.events[0]);
     await game.load(def, competitors, { skill: settings.skill, seed: run.seed });
     if (!params.get('test')) await warmUp();

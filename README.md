@@ -5,7 +5,7 @@ wooden figurines, a chalk track on the floorboards and a big book as a ski jump,
 animals cheer from cardboard-box stands. Sibling of [Tabletop Turbo](https://github.com/DrAndiB/TabletopTurbo).
 
 ## Play
-- **The Trials**: every event in a row, chocolate-coin medals, a running medal table and a closing ceremony.
+- **The Trials**: the events you pick (all twelve, summer, winter or a quick four) in a row, chocolate-coin medals, a running medal table and a closing ceremony.
 - **One event**: pick an event and play it on its own.
 - Up to four players on one keyboard (each player has left, right and action), on touch screens, or
   against computer kids (easy, normal, hard). Every team picks a country: real flags, a capital and a
@@ -15,9 +15,15 @@ animals cheer from cardboard-box stands. Sibling of [Tabletop Turbo](https://git
 |---|---|---|
 | Sprint | Summer | Hold action in the blocks and let go on the whistle; tap left and right in turn to run: smooth out of the blocks, a steady beat, a little faster at the end. |
 | Hurdles | Summer | Two buttons: tap left or right on a steady beat to run, action to jump; at the beat it's tap, tap, tap, tap, jump at the chalk mark before each pencil-and-domino hurdle. |
+| Swimming | Summer | Two lengths of the bathtub: hold action on the soap bar and let go on the whistle, tap left and right for the strokes, tap action to breathe before the air runs out and over the green tiles for a tumble turn. |
+| Diving | Summer | Off a ruler on a tower of books into the goldfish bowl: tap action as you land on the board to bounce, hold action to tuck and spin, let go when the dial turns green, left/right for half twists. Five plush judges, three dives. |
 | Javelin | Summer | A pencil down the living-room rug: rhythm run-up, hold action to draw back, let go at 30-40° before the red line. Three throws. |
+| Pole vault | Summer | A bendy straw over a skewer bar on two rulers: rhythm run-up, tap action on the green tape to plant, tap again as the straw straightens to push off. The bar goes up 20 cm a round; two misses at a height and you're out. |
 | Ski jump | Winter | Down an ironing board onto a cushion mountain: tap to start, keep your balance, tap in the green zone, lean against announced fan gusts, tap at LAND! for a telemark. Two jumps. |
-| Curling | Winter | Bottle caps down the kitchen table: aim (they curl back to the middle), hold for strength, sweep with a toothbrush in rhythm. |
+| Speed skating | Winter | Two laps of an ice oval in a baking tray: long steady strokes, tap action at the sweets to lean into a bend and again after it to stand up. |
+| Curling | Winter | Bottle caps down the kitchen table: aim (straight goes straight, aimed to one side the cap curls back to the middle, a dotted line shows the path), hold for strength, sweep with a toothbrush in rhythm. |
+| Bobsled | Winter | Poster tubes from the toy chest to the floor: push off in rhythm, jump in late, hold left/right to keep on the red line through the bends. Two runs, times added. |
+| Halfpipe | Winter | A cardboard U dusted with icing sugar: pump at the bottom, tap left/right for half spins and hold action to grab in the air, land with both finished. Two runs, the best counts. |
 | Biathlon | Winter | Three laps round the coffee table, over a sofa cushion and through felt fir trees: easy beat on the flat, harder uphill, tuck downhill but stand up before the curve; after laps 1 and 2 the stadium fork leads to the range (steer the drifting sight onto five caps), after lap 3 to the finish. |
 
 Default keys: P1 ← → ↑ · P2 A D W · P3 J L I · P4 Num 4, Num 6, Num 8 (all can be changed under Keys).

@@ -56,6 +56,7 @@ function geos() {
     goggle: new THREE.TorusGeometry(HEAD_R * 1.1, 0.24, 8, 36, 1.7),
     lens: new RoundedBoxGeometry(1.5, 0.55, 0.3, 3, 0.14),
     ski: skiGeometry(),
+    blade: new RoundedBoxGeometry(0.12, 0.42, 3.1, 1, 0.05).translate(0, -SOLE - 0.24, 0.45),
     ponytail: new THREE.CapsuleGeometry(0.42, 1.0, 6, 12),
     bun: new THREE.SphereGeometry(0.55, 16, 12),
     curl: new THREE.SphereGeometry(0.42, 12, 10),
@@ -227,8 +228,8 @@ export class Figurine {
       list.push([g.bead, WOOD, 'knee' + s, null, null, 0.92], [g.shin, sk, 'knee' + s], [g.sock, P.trim, 'knee' + s, [0, -SHIN + 0.35, 0]]);
       list.push([g.foot, SHOE, 'ank' + s], [g.foot, SOLE_C, 'ank' + s, [0, -0.06, 0], null, [1.02, 0.25, 1.02]]);
     }
-    // hair (hidden under a ski helmet)
-    if (this.gear !== 'ski') {
+    // hair (hidden under a helmet or a swim cap)
+    if (!['ski', 'swim', 'helmet', 'skate'].includes(this.gear)) {
       const st = this.style;
       if (st === 'bob') list.push([g.hairBob, hc, 'skull', [0, 0.05, -0.06], [-0.42, 0, 0]]);
       else list.push([g.hairCap, hc, 'skull', [0, 0.02, -0.05], [-0.32, 0, 0]]);
@@ -248,6 +249,16 @@ export class Figurine {
       list.push([g.goggle, STRAP, 'skull', [0, 0.35, 0], [Math.PI / 2 - 0.08, 0, Math.PI / 2 - 0.85 + Math.PI]]);
       list.push([g.lens, LENS, 'skull', [0, 0.42, HEAD_R * 1.02], [-0.12, 0, 0]]);
       list.push([g.ski, SKI, 'ankL'], [g.ski, SKI, 'ankR']);
+    } else if (this.gear === 'swim') {
+      // a swim cap in the shirt colour, and goggles
+      list.push([g.helmet, P.shirt, 'skull', [0, 0.02, -0.04], [-0.28, 0, 0], 0.95]);
+      list.push([g.goggle, STRAP, 'skull', [0, 0.32, 0], [Math.PI / 2 - 0.08, 0, Math.PI / 2 - 0.85 + Math.PI], 0.97]);
+      list.push([g.lens, LENS, 'skull', [0, 0.4, HEAD_R * 1.0], [-0.12, 0, 0], [0.9, 0.8, 1]]);
+    } else if (this.gear === 'helmet' || this.gear === 'skate') {
+      list.push([g.helmet, P.shirt, 'skull', [0, 0.05, -0.04], [-0.28, 0, 0]]);
+      list.push([g.goggle, STRAP, 'skull', [0, 0.35, 0], [Math.PI / 2 - 0.08, 0, Math.PI / 2 - 0.85 + Math.PI]]);
+      list.push([g.lens, LENS, 'skull', [0, 0.42, HEAD_R * 1.02], [-0.12, 0, 0]]);
+      if (this.gear === 'skate') list.push([g.blade, 0xd8dade, 'ankL'], [g.blade, 0xd8dade, 'ankR']);
     }
     return list;
   }
@@ -318,7 +329,8 @@ export class Figurine {
     this.face.material = sharedMats()['face_' + kind] || sharedMats().face_happy;
   }
 
-  // 'none' | 'sprint' (headband) | 'ski' (helmet, goggles, craft-stick skis)
+  // 'none' | 'sprint' (headband) | 'ski' (helmet, goggles, craft-stick skis) | 'swim' (cap, goggles)
+  // | 'helmet' (helmet, goggles) | 'skate' (helmet, goggles, blades)
   setGear(kind) {
     if (kind === this.gear) return;
     this.gear = kind;

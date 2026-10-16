@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tabletop Trials: Andreas Braun</title>
-<meta name="description" content="A playroom multi-sport games for the browser: painted wooden figurines sprint and hurdle across the floorboards, throw pencil javelins, ski-jump off an ironing board, curl bottle caps and race a cotton-wool biathlon while stuffed animals cheer. Up to four players on one keyboard or touch screen, with computer kids to race against.">
+<meta name="description" content="A playroom multi-sport games for the browser: painted wooden figurines sprint and hurdle across the floorboards, swim the bathtub, dive into the fishbowl, throw pencil javelins, vault on a straw, ski-jump off an ironing board, skate a baking tray, curl bottle caps, ride a poster-tube bobsled and a cardboard halfpipe and race a cotton-wool biathlon while stuffed animals cheer. Up to four players on one keyboard or touch screen, with computer kids to race against.">
 <meta property="og:title" content="Tabletop Trials">
-<meta property="og:description" content="Tiny athletes, big playroom: six events, chocolate-coin medals. Up to four players on one keyboard.">
+<meta property="og:description" content="Tiny athletes, big playroom: twelve events, chocolate-coin medals. Up to four players on one keyboard.">
 <meta name="theme-color" content="#1f1a17">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23ffc93c'/%3E%3Ccircle cx='32' cy='19' r='9' fill='%23f4d4b6' stroke='%231f1a17' stroke-width='3'/%3E%3Cpath d='M20 54V36a12 12 0 0 1 24 0v18z' fill='%232f6fe0' stroke='%231f1a17' stroke-width='3'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="css/game.css">
@@ -39,7 +39,7 @@
 <section id="screen-title" class="screen">
   <div class="title-wrap">
     <h1 class="logo"><span class="l1">Tabletop</span><span class="l2">Trials</span></h1>
-    <p class="tagline">Tiny athletes, big playroom. Six events from sprint to biathlon, chocolate-coin medals, up to four players on one keyboard.</p>
+    <p class="tagline">Tiny athletes, big playroom. Twelve events from the bathtub to the toy chest, chocolate-coin medals, up to four players on one keyboard.</p>
     <div class="title-buttons">
       <button id="btn-play" class="btn big yellow">Play <kbd>Enter</kbd></button>
       <button id="btn-controls" class="btn">Keys</button>
@@ -65,6 +65,7 @@
       <div class="col">
         <h3>2 · Events</h3>
         <div class="seg modes"><button data-opt="mode" data-val="trials">The Trials</button><button data-opt="mode" data-val="single">One event</button></div>
+        <div id="trials-pick" class="seg picks" hidden><button data-pick="all">All 12</button><button data-pick="summer">Summer</button><button data-pick="winter">Winter</button><button data-pick="quick">Quick 4</button></div>
         <p class="opt-help" id="mode-help"></p>
         <div id="event-list" class="event-list"></div>
         <h3>3 · Options</h3>

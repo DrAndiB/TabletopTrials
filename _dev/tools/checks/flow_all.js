@@ -2,10 +2,10 @@
 (async () => {
   const T = __tt, wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const out = [];
-  for (let n = 0; n < 8; n++) {
+  for (let n = 0; n < 14; n++) {
     let s = 0;
     const id = T.game.def.id;
-    while ((!T.run().last || T.run().last.def.id !== id) && s < 400) { T.game.simulate(0.5); s += 0.5; await wait(0); }
+    while ((!T.run().last || T.run().last.def.id !== id) && s < 600) { T.game.simulate(0.5); s += 0.5; await wait(0); }
     for (let k = 0; k < 80 && T.screen() !== 'results'; k++) await wait(100);
     const L = T.run().last;
     out.push(`${id} (${s}s sim): ` + L.rows.map((r) => `${r.place ?? '-'}:${T.run().competitors[r.i].code} ${r.text} ${r.medal || ''}`).join(' | '));

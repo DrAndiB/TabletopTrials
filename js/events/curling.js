@@ -1,5 +1,6 @@
 // Curling: bottle caps slid down the polished kitchen table at a paper target.
-// Aim with LEFT/RIGHT (the cap curls back towards the middle, so aim a little to one side), hold ACTION
+// Aim with LEFT/RIGHT: aimed straight, the cap slides straight; aimed to one side, it spins and curls
+// back towards the middle (round a cap in the way). A dotted line shows the path. Hold ACTION
 // for strength and let go, then tap LEFT/RIGHT in turn to sweep with a toothbrush: sweeping carries the
 // cap further and straighter. Every cap in the target scores at the end of an end: 3 in the middle,
 // 2 in the red ring, 1 in the blue ring. Knock the others out!
@@ -15,7 +16,7 @@ const R = 1.6;                 // a bottle cap
 const HOG = 45, TEE = 140, BACK = 154, SIDE = 15;
 const RINGS = [[2.6, 3], [6.6, 2], [11, 1]];
 const REL_X = 8;               // where the cap leaves the hand
-const DECEL = 6.2, SWEEP = 0.16, V_MIN = 21, V_MAX = 52, CURL = 2.15, AIM_MAX = 10;
+const DECEL = 6.2, SWEEP = 0.16, V_MIN = 21, V_MAX = 52, CURL = 2.15, AIM_MAX = 10, CURL_FULL = 2.1;
 const SWEEP_TARGET = 6;        // taps per second for full sweeping
 const ORD = ['1st', '2nd', '3rd', '4th'];
 // computer curlers: how far off their aim and strength are, and how well they judge the sweep
@@ -25,6 +26,8 @@ const BOT = {
   hard: { aim: 0.45, power: 0.018, think: 0.9 },
 };
 const deg = (a) => (a * Math.PI) / 180;
+// straight aim, straight slide; the further to one side, the more the cap spins and curls back
+const curlFor = (aim) => -(aim / AIM_MAX) * CURL_FULL;
 
 // one step of a sliding cap: friction, the curl (stronger as it slows) and the sweeping
 function slide(s, dt, sweep) {
@@ -46,9 +49,21 @@ function slide(s, dt, sweep) {
 // where a lone cap thrown with this aim (degrees) and strength (0..1) comes to rest, sweeping at e
 export function restingPoint(aim, power, e = 0) {
   const a = deg(aim), v0 = V_MIN + power * (V_MAX - V_MIN);
-  const s = { x: REL_X, z: 0, vx: v0 * Math.cos(a), vz: v0 * Math.sin(a), curl: aim >= 0 ? -1 : 1 };
+  const s = { x: REL_X, z: 0, vx: v0 * Math.cos(a), vz: v0 * Math.sin(a), curl: curlFor(aim) };
   for (let k = 0; k < 3000 && slide(s, 1 / 60, e); k++);
   return s;
+}
+// the path of a lone cap, as points every `gap` units, ending where it stops
+export function pathFor(aim, power, gap = 3) {
+  const a = deg(aim), v0 = V_MIN + power * (V_MAX - V_MIN);
+  const s = { x: REL_X, z: 0, vx: v0 * Math.cos(a), vz: v0 * Math.sin(a), curl: curlFor(aim) };
+  const pts = [];
+  let acc = 0, px = s.x, pz = s.z;
+  for (let k = 0; k < 3000 && slide(s, 1 / 60, 0); k++) {
+    acc += Math.hypot(s.x - px, s.z - pz); px = s.x; pz = s.z;
+    if (acc >= gap) { acc = 0; if (s.x > REL_X + 4) pts.push([s.x, s.z]); }
+  }
+  return { pts, stop: s };
 }
 
 class Curling {
@@ -201,6 +216,16 @@ class Curling {
     a.beginPath(); a.moveTo(224, 8); a.lineTo(256, 32); a.lineTo(224, 56); a.fill();
     this.arrow = new THREE.Mesh(new THREE.PlaneGeometry(60, 5).rotateX(-Math.PI / 2).translate(30, 0, 0), new THREE.MeshBasicMaterial({ map: K.TX.toTexture(ac, { wrap: false }), transparent: true, depthWrite: false }));
     this.arrow.position.set(REL_X, 0.12, 0); g.add(this.arrow);
+    this.arrow.visible = false;
+    // the aim path: dots along where the cap will slide at the yellow strength, a ring where it stops
+    const dotMat = new THREE.MeshBasicMaterial({ color: 0x2b2420, transparent: true, opacity: 0.8, depthWrite: false });
+    this.dots = new THREE.InstancedMesh(new THREE.CircleGeometry(0.62, 12).rotateX(-Math.PI / 2), dotMat, 70);
+    this.dots.position.y = 0.1; this.dots.count = 0; this.dots.frustumCulled = false; g.add(this.dots);
+    this.aimRing = new THREE.Mesh(new THREE.RingGeometry(1.6, 2.4, 32).rotateX(-Math.PI / 2), dotMat);
+    const inner = new THREE.Mesh(new THREE.RingGeometry(1.1, 1.6, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false }));
+    this.aimRing.add(inner);
+    this.aimRing.position.y = 0.1; this.aimRing.visible = false; g.add(this.aimRing);
+    this.pathKey = null;
     // where the sliding cap will stop: a ring that moves on while you sweep
     this.stopRing = new THREE.Mesh(new THREE.RingGeometry(1.3, 2.1, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false }));
     this.stopDot = new THREE.Mesh(new THREE.CircleGeometry(0.45, 16).rotateX(-Math.PI / 2), this.stopRing.material);
@@ -272,7 +297,7 @@ class Curling {
     this.throwNo++;
     if (this.throwNo >= this.queue.length) { this.scoreEnd(); return; }
     const p = this.cur = this.players[this.queue[this.throwNo]];
-    this.aim = 0; this.power = 0; this.powerDir = 1; this.holding = false;
+    this.aim = 0; this.power = 0; this.powerDir = 1; this.holding = false; this.pathKey = null;
     this.sweep = { rhythm: new Rhythm({ target: SWEEP_TARGET }), effort: 0, anim: 0 };
     this.thrown = null;
     this.held = new THREE.Mesh(this.capGeo, p.mats);
@@ -293,6 +318,21 @@ class Curling {
     let lo = 0, hi = 1;
     for (let k = 0; k < 14; k++) { const m = (lo + hi) / 2; if (restingPoint(this.aim, m, 0).x < x) lo = m; else hi = m; }
     return (lo + hi) / 2;
+  }
+
+  // the dotted aim path at the strength that reaches the middle (recomputed when the aim moves)
+  updatePath() {
+    const key = Math.round(this.aim * 10);
+    if (key === this.pathKey) return;
+    this.pathKey = key;
+    this.midPower = this.powerFor(TEE);
+    const { pts, stop } = pathFor(this.aim, this.midPower);
+    const m = new THREE.Matrix4();
+    const n = Math.min(pts.length, this.dots.instanceMatrix.count);
+    for (let k = 0; k < n; k++) { m.makeTranslation(pts[k][0], 0, pts[k][1]); this.dots.setMatrixAt(k, m); }
+    this.dots.count = n;
+    this.dots.instanceMatrix.needsUpdate = true;
+    this.aimRing.position.x = stop.x; this.aimRing.position.z = stop.z;
   }
 
   // where the sliding cap will stop if the sweeping carries on like this (collisions aside)
@@ -369,7 +409,7 @@ class Curling {
     if (this.phase === 'aim') {
       const held = ctx.held(p.i);
       this.aim = clamp(this.aim + ((held.right ? 1 : 0) - (held.left ? 1 : 0)) * 7 * dt, -AIM_MAX, AIM_MAX);
-      if (q.some((e) => e.b === 'action' && e.down)) { this.phase = 'power'; this.t = 0; this.power = 0; this.powerDir = 1; ctx.sound.pop(); this.midPower = this.powerFor(TEE); }
+      if (q.some((e) => e.b === 'action' && e.down)) { this.phase = 'power'; this.t = 0; this.power = 0; this.powerDir = 1; ctx.sound.pop(); this.updatePath(); }
       if (this.t > 15) { this.phase = 'power'; this.t = 0; }
     } else if (this.phase === 'power') {
       // the strength meter swings up and down while ACTION is held
@@ -394,7 +434,7 @@ class Curling {
     const a = deg(this.aim), v0 = V_MIN + this.power * (V_MAX - V_MIN);
     const mesh = this.held;
     this.held = null;
-    const s = { x: REL_X, z: 0, vx: v0 * Math.cos(a), vz: v0 * Math.sin(a), curl: this.aim >= 0 ? -1 : 1, owner: p, mesh, spin: 0, live: true };
+    const s = { x: REL_X, z: 0, vx: v0 * Math.cos(a), vz: v0 * Math.sin(a), curl: curlFor(this.aim), owner: p, mesh, spin: 0, live: true };
     this.stones.push(s);
     this.thrown = s;
     this.phase = 'slide'; this.t = 0;
@@ -408,7 +448,7 @@ class Curling {
     for (const s of this.stones) {
       if (!s.live) continue;
       const moving = slide(s, dt, s === this.thrown ? this.sweep.effort : 0);
-      if (moving) s.spin += dt * (s.curl ? 2 * s.curl : 0);
+      if (moving) s.spin += dt * 2.6 * s.curl;   // only a curling cap spins
     }
     // caps knock each other about (equal weights, a little bounce lost)
     const L = this.stones.filter((s) => s.live);
@@ -517,9 +557,11 @@ class Curling {
     });
     if (p) this.poseCurler(p, tt, dt, paused);
     if (this.held) { const a = deg(this.aim); this.held.position.set(REL_X * Math.cos(a) - 2, 0, REL_X * Math.sin(a)); }
-    // aim arrow
-    this.arrow.visible = !!p && (this.phase === 'aim' || this.phase === 'power');
-    if (this.arrow.visible) { this.arrow.rotation.y = -deg(this.aim); this.arrow.scale.x = this.phase === 'power' ? 0.4 + this.power * 0.9 : 1; }
+    // the aim path
+    const aiming = !!p && (this.phase === 'aim' || this.phase === 'power');
+    if (aiming) this.updatePath();
+    this.dots.visible = this.aimRing.visible = aiming;
+    if (aiming) { this.dots.material.opacity = 0.6 + 0.25 * Math.sin(tt * 5); this.aimRing.scale.setScalar(1 + 0.08 * Math.sin(tt * 6)); }
     // points over the scoring caps
     if (this.labels && this.labels.length) {
       const cam = ctx.R.camera, el = ctx.R.renderer.domElement, v = new THREE.Vector3();
@@ -597,14 +639,14 @@ class Curling {
     this.hudG.classList.toggle('cu-hidden', !show);
     if (!show) return;
     const touch = p.c.type === 'touch';
-    const tip = ph === 'aim' ? `${touch ? '◀ ▶' : 'left/right'} aim · hold ${touch ? '●' : 'action'} for strength`
-      : ph === 'power' ? 'let go at the yellow mark to reach the middle' : `sweep ${touch ? '◀ ▶' : 'left, right'}: the ring shows where it stops`;
+    const tip = ph === 'aim' ? `${touch ? '◀ ▶' : 'left/right'} aim: the dots show the path · hold ${touch ? '●' : 'action'} for strength`
+      : ph === 'power' ? 'let go at the yellow mark to stop on the dots' : `sweep ${touch ? '◀ ▶' : 'left, right'}: the ring shows where it stops`;
     this.hudG.querySelector('.tip').textContent = tip;
     const pw = this.hudG.querySelector('.pw'), sw = this.hudG.querySelector('.sw');
     pw.style.display = ph === 'slide' ? 'none' : ''; sw.style.display = ph === 'slide' ? '' : 'none';
     pw.querySelector('i').style.width = `${(this.power * 100).toFixed(0)}%`;
     const mark = pw.querySelector('b');
-    mark.style.display = ph === 'power' && this.midPower != null ? '' : 'none';
+    mark.style.display = this.midPower != null ? '' : 'none';
     if (this.midPower != null) mark.style.left = `${(this.midPower * 100).toFixed(1)}%`;
     sw.querySelector('i').style.width = `${(this.sweep.effort * 100).toFixed(0)}%`;
     sw.querySelector('.bar').classList.toggle('go', this.sweep.effort > 0.85);
@@ -651,8 +693,8 @@ export default {
   venue: 'The kitchen table, polished till it shines, with a paper target taped at the far end.',
   loading: 'Polishing the kitchen table…',
   how: [
-    { verb: 'Steer', text: 'Aim with <b>left</b> and <b>right</b>. The cap curls back towards the middle, so aim a little to one side.' },
-    { verb: 'Power', text: 'Hold <b>action</b>: the strength meter swings up and down. Let go at the right strength.' },
+    { verb: 'Steer', text: 'Aim with <b>left</b> and <b>right</b>. Aimed straight, the cap slides straight. Aimed to one side, it spins and curls back towards the middle, round a cap in the way. The dotted line shows the path.' },
+    { verb: 'Power', text: 'Hold <b>action</b>: the strength meter swings up and down. Let go at the yellow mark to stop at the end of the dots.' },
     { verb: 'Rhythm', text: 'While it slides, tap <b>left</b> and <b>right</b> in turn to sweep with your toothbrush: it goes further and straighter. In the target, the middle is worth 3, the red ring 2, the blue ring 1.' },
   ],
   better: 'higher',
