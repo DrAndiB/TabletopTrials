@@ -15,13 +15,14 @@ const G = 30, DRAG = 0.0005;
 const M_PER_UNIT = 0.75;       // metres per cm of carpet
 const A0 = 8, A_RATE = 55, A_MAX = 75;   // angle while holding: start, degrees per second, limit
 const PEN_L = 12;              // the pencil javelin
+const ZONE = [-29, -17];       // the throw zone on the runway: start drawing back in here
 const ATTEMPTS = 3;
 const ORD = ['1st', '2nd', '3rd', '4th'];
 // computer throwers: run-up cadence, where they start drawing back (units before the line), angle spread
 const BOT = {
-  easy: { cad: 0.78, hold: [27, 6], err: 9 },
-  normal: { cad: 0.9, hold: [23.5, 4], err: 5.5 },
-  hard: { cad: 0.96, hold: [21, 2.4], err: 3 },
+  easy: { cad: 0.84, hold: [26, 5], err: 8 },
+  normal: { cad: 0.96, hold: [22, 3.5], err: 4.5 },
+  hard: { cad: 1.08, hold: [19.5, 2], err: 2.2 },
 };
 const deg = (a) => (a * Math.PI) / 180;
 
@@ -169,6 +170,28 @@ class Javelin {
     // the runway: two strips of masking tape, the foul line in red tape
     const tapeM = new THREE.MeshStandardMaterial({ color: 0xe8d9a8, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -2 });
     for (const z of [-6, 6]) { const m = new THREE.Mesh(new THREE.PlaneGeometry(108, 1.4).rotateX(-Math.PI / 2), tapeM); m.position.set(RUN_X / 2 - 6, Y, z); m.receiveShadow = true; g.add(m); }
+    // the throw zone: green striped tape where you start drawing back
+    const zc = K.TX.makeCanvas(256, 256), z2 = zc.getContext('2d');
+    z2.fillStyle = 'rgba(47,174,90,0.85)'; z2.fillRect(0, 0, 256, 256);
+    z2.fillStyle = 'rgba(255,255,255,0.35)';
+    for (let k = -256; k < 512; k += 40) { z2.beginPath(); z2.moveTo(k, 0); z2.lineTo(k + 20, 0); z2.lineTo(k + 276, 256); z2.lineTo(k + 256, 256); z2.fill(); }
+    z2.fillStyle = '#ffffff'; z2.font = '64px "Lilita One", Impact, sans-serif'; z2.textAlign = 'center'; z2.textBaseline = 'middle'; z2.fillText('THROW', 128, 132);
+    const zone = new THREE.Mesh(new THREE.PlaneGeometry(ZONE[1] - ZONE[0], 11).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(zc, { wrap: false }), roughness: 0.8, transparent: true, polygonOffset: true, polygonOffsetFactor: -2 }));
+    zone.position.set((ZONE[0] + ZONE[1]) / 2, Y + 0.01, 0); zone.receiveShadow = true; g.add(zone);
+    // a protractor that pops up beside the thrower while drawing back, the needle showing the angle
+    const pc = K.TX.makeCanvas(256), p2 = pc.getContext('2d');
+    p2.fillStyle = 'rgba(255,255,255,0.82)'; p2.beginPath(); p2.moveTo(128, 128); p2.arc(128, 128, 126, Math.PI, 0); p2.fill();
+    p2.fillStyle = 'rgba(47,174,90,0.9)'; p2.beginPath(); p2.moveTo(128, 128); p2.arc(128, 128, 122, -deg(40), -deg(30)); p2.fill();
+    p2.strokeStyle = '#1f1a17'; p2.lineWidth = 3;
+    for (let a = 0; a <= 180; a += 10) { const r0 = a % 30 === 0 ? 96 : 108; p2.beginPath(); p2.moveTo(128 + Math.cos(deg(a)) * r0, 128 - Math.sin(deg(a)) * r0); p2.lineTo(128 + Math.cos(deg(a)) * 124, 128 - Math.sin(deg(a)) * 124); p2.stroke(); }
+    p2.lineWidth = 5; p2.beginPath(); p2.arc(128, 128, 125, Math.PI, 0); p2.stroke();
+    this.protractor = new THREE.Group();
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(6, 32, 0, Math.PI), new THREE.MeshBasicMaterial({ map: K.TX.toTexture(pc, { wrap: false }), transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+    this.protractor.add(disc);
+    this.needle = new THREE.Mesh(new THREE.BoxGeometry(6, 0.45, 0.1).translate(3, 0, 0.05), new THREE.MeshBasicMaterial({ color: 0xe23b2e }));
+    this.protractor.add(this.needle);
+    this.protractor.visible = false;
+    g.add(this.protractor);
     const foul = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 15).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xe23b2e, roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -2 }));
     foul.position.set(LINE_X + 0.8, Y + 0.01, 0); foul.receiveShadow = true; g.add(foul);
     // the landing sector: two lines of wool, and wool arcs every 10 m with number cards
@@ -206,8 +229,8 @@ class Javelin {
     }
     const tape = new THREE.Mesh(new THREE.PlaneGeometry(TL, 2.6).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(tc, { wrap: false }), roughness: 0.6, polygonOffset: true, polygonOffsetFactor: -2 }));
     tape.position.set(LINE_X + TL / 2, Y + 0.02, 9); tape.receiveShadow = true; g.add(tape);
-    const caseM = new THREE.Mesh(new K.RoundedBoxGeometry(4, 4, 1.8, 3, 0.8), K.plastic(0xe23b2e, 0.3));
-    caseM.position.set(LINE_X - 1, Y + 2, 11); caseM.castShadow = true; g.add(caseM);
+    const caseM = new THREE.Mesh(new K.RoundedBoxGeometry(2.8, 2.8, 1.4, 3, 0.6), K.plastic(0xe23b2e, 0.3));
+    caseM.position.set(LINE_X - 1, Y + 1.4, 11); caseM.castShadow = true; g.add(caseM);
   }
 
   buildCrowd(K, competitors) {
@@ -244,9 +267,7 @@ class Javelin {
     el.appendChild(style);
     const mk = (cls, html) => { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; el.appendChild(d); return d; };
     this.hudCard = mk('jv-card', '<div class="who"></div><div class="rd"></div><ol></ol>');
-    this.hudG = mk('jv-g jv-hidden', '<div class="tip"></div><div class="row"><span>Speed</span><div class="bar sp"><i></i></div></div><div class="row"><span>To line</span><div class="bar ln"><i></i><s></s></div></div><div class="row"><span>Angle</span><div class="bar an"><u></u><b></b></div></div>');
-    const an = this.hudG.querySelector('.an u');
-    an.style.left = `${(30 / A_MAX) * 100}%`; an.style.width = `${(10 / A_MAX) * 100}%`;
+    this.hudG = mk('jv-g jv-hidden', '<div class="row"><span>Speed</span><div class="bar sp"><i></i></div></div>');
     if (this.ctx.competitors.some((c) => c.type === 'touch')) this.hudG.style.setProperty('--tb', '110px');
   }
 
@@ -506,19 +527,16 @@ class Javelin {
 
   updateHud() {
     const th = this.cur, ph = this.phase, a = this.ath;
+    const showP = !!th && !!a && a.holding && !a.released;
+    this.protractor.visible = showP;
+    if (showP) { this.protractor.position.set(a.x - 2, 11.5, 3); this.needle.rotation.z = deg(a.angle); }
     const show = th && th.c.human && (ph === 'ready' || ph === 'runup');
     this.hudG.classList.toggle('jv-hidden', !show);
     if (!show) return;
-    const touch = th.c.type === 'touch';
-    const toLine = LINE_X - a.x;
-    const tip = ph === 'ready' ? `${touch ? '◀ ▶' : 'left, right'} to run` : a.holding ? `let go at ${touch ? '30–40°' : '30–40°'}!` : toLine < 32 ? `hold ${touch ? '●' : 'action'} to draw back!` : 'keep the beat…';
-    this.hudG.querySelector('.tip').textContent = tip;
     const e = clamp(a.v / VMAX, 0, 1);
     const sp = this.hudG.querySelector('.sp');
     sp.querySelector('i').style.width = `${(e * 100).toFixed(0)}%`;
     sp.classList.toggle('go', e > 0.9);
-    this.hudG.querySelector('.ln i').style.width = `${clamp((a.x - RUN_X) / (LINE_X - RUN_X), 0, 1) * 100}%`;
-    this.hudG.querySelector('.an b').style.left = `${clamp(a.angle / A_MAX, 0, 1) * 100}%`;
   }
 
   applyCamera(dt) {
