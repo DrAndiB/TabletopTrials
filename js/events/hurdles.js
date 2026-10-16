@@ -1,10 +1,12 @@
 // Hurdles: the sprint's chalk track with ten hurdles per lane, each a pencil balanced on two dominoes.
-// Run with the left/right rhythm and tap ACTION to jump: take off at the chalk mark before each hurdle.
+// Two buttons: tap LEFT or RIGHT on a steady beat to run, ACTION to jump. At the right beat there are
+// four strides between hurdles, so a steady runner goes tap, tap, tap, tap, JUMP right at the chalk mark.
 // A clipped pencil costs speed; running into a hurdle tips you over.
 import * as THREE from '../../vendor/three.bundle.js';
 import { Sprint } from './sprint.js';
 import { REST, blendPose, POSES } from '../figurine.js';
 import { clamp } from '../util.js';
+import { Rhythm } from '../verbs.js';
 
 const HURDLES = Array.from({ length: 10 }, (_, k) => 39 + k * 25.5);
 const DOM_H = 4.8;            // a domino standing on end
@@ -12,19 +14,42 @@ const PENCIL_R = 0.38;
 const JUMP_T = 0.44;          // seconds in the air
 const LIFT = 3.3;             // how high the hips rise at the top of the jump
 const CLEAN = [0.24, 0.76], CLIP = [0.1, 0.9];   // where in the jump the hurdle may be crossed
-const MARK = 7;               // chalk take-off mark, this far before each hurdle
+const VMAX_H = 23.5, TARGET_H = 4.6;   // a steady 4.6 beats a second: four strides and a jump per hurdle
+const MARK = (VMAX_H * JUMP_T) / 2;     // chalk take-off mark, this far before each hurdle
 // computer hurdlers: timing spread of the take-off (s) and the odd forgotten hurdle
 const BOT_JUMP = { easy: { err: 0.085, miss: 0.035 }, normal: { err: 0.055, miss: 0.012 }, hard: { err: 0.035, miss: 0.004 } };
 // over the hurdle: lead leg straight out, trail leg tucked to the side, opposite arm forward
 const HURDLE_POSE = { ...REST, lean: 0.6, head: 0.15, hipL: 1.5, kneeL: 0.12, ankL: 0.25, hipR: -0.3, kneeR: 1.7, spR: 0.6, ankR: 0.4, shR: 1.35, elR: 0.35, abR: 0.15, shL: -0.7, elL: 1.0, abL: 0.3 };
 
 class Hurdles extends Sprint {
-  constructor(ctx) { super(ctx, { vmax: 32.5 }); }
+  constructor(ctx) { super(ctx, { vmax: VMAX_H, target: TARGET_H, zones: false }); }
+
+  // any stride key counts (no need to alternate); the jump counts as a beat too
+  makeRhythm() {
+    const r = new Rhythm({ target: this.target });
+    const press = r.press.bind(r);
+    r.press = (side, t) => press(r.last === 'left' ? 'right' : 'left', t);
+    return r;
+  }
 
   async build() {
     await super.build();
     for (const ru of this.runners) Object.assign(ru, { y: 0, jumpU: 0, air: false, jumpT0: 0, next: 0, clips: 0, falls: 0, downT: 0, crossed: false });
     this.buildHurdles(this.ctx.kit);
+    const cad = { easy: 0.86, normal: 0.95, hard: 1.0 }[this.ctx.skillName] ?? 0.95;
+    for (const ru of this.runners) ru.botCad = this.target * cad * (0.98 + this.r() * 0.04);
+    // in the players' boxes: the beat to the next hurdle, four strides and a jump, instead of the race-phase dots
+    const st = document.createElement('style');
+    st.textContent = '.rm .beat{display:flex;gap:4px;margin-top:4px;align-items:center}.rm .beat span{width:9px;height:9px;border-radius:50%;background:#e6dccb}.rm .beat span.on{background:#1f1a17}.rm .beat span.j{width:16px;height:16px;background:#f6d9b8}.rm .beat span.j.on{background:#ef7d2c}';
+    this.ctx.hud.el.appendChild(st);
+    for (const m of this.meters) {
+      m.d.querySelector('.z').style.display = 'none';
+      const b = document.createElement('div');
+      b.className = 'beat';
+      b.innerHTML = '<span></span><span></span><span></span><span></span><span class="j"></span>';
+      m.d.querySelector('.b').after(b);
+      m.beat = b.querySelectorAll('span');
+    }
   }
 
   buildHurdles(K) {
@@ -90,10 +115,14 @@ class Hurdles extends Sprint {
     this.ctx.sound.clack?.(this.pan(ru.x));
   }
 
+  // a steady beat is the fastest: chopping your steps faster than it trips you up
+  tuneEffort(ru, x, eff) { return x > 1.15 ? eff * Math.max(0.8, 1 - (x - 1.15) * 0.5) : eff; }
+
   // ACTION during the race: jump
   onAction(ru, t) {
     if (ru.air || ru.downT > 0) return;
     ru.air = true; ru.jumpT0 = t; ru.crossed = false;
+    ru.rhythm.press('action', t);
     if (ru.c.human) this.ctx.sound.whoosh(0.35);
   }
 
@@ -103,7 +132,7 @@ class Hurdles extends Sprint {
       if (u >= 1) {
         ru.air = false; ru.jumpU = 0; ru.y = 0;
         // every landing costs a little speed, and a jump over nothing breaks the stride
-        ru.v *= ru.crossed ? 0.975 : 0.93;
+        ru.v *= ru.crossed ? 0.985 : 0.93;
       } else { ru.jumpU = Math.max(0.001, u); ru.y = 4 * LIFT * u * (1 - u) * 0.55; }
     }
     const hx = HURDLES[ru.next];
@@ -143,7 +172,11 @@ class Hurdles extends Sprint {
     if (ru.botMiss) return;
     const ideal = ru.v * JUMP_T * 0.5;
     const tTo = (hx - ru.x - ideal) / Math.max(5, ru.v);
-    if (tTo <= ru.botErr) { ru.c.pad.push('action', true, now); ru.c.pad.push('action', false, now + 0.05); }
+    if (tTo <= ru.botErr) {
+      ru.c.pad.push('action', true, now); ru.c.pad.push('action', false, now + 0.05);
+      // the jump takes the place of a stride
+      if (ru.bot.next != null) ru.bot.next += 1 / Math.max(1, ru.botCad);
+    }
   }
 
   runnerPose(ru, pose, jumpU, down) {
@@ -156,16 +189,6 @@ class Hurdles extends Sprint {
     return pose;
   }
 
-  tipFor(ru) {
-    if (ru.downT > 0) return 'up you get!';
-    const hx = HURDLES[ru.next];
-    if (hx == null || ru.air) return null;
-    const d = hx - ru.x, v = Math.max(ru.v, 10);
-    if (d < v * JUMP_T * CLEAN[1] && d > v * JUMP_T * CLEAN[0]) return 'JUMP!';
-    if (d < v * JUMP_T + 8) return 'jump at the chalk line…';
-    return null;
-  }
-
   resultNote(ru) {
     const n = ru.clips + ru.falls;
     return n ? `${n} hurdle${n > 1 ? 's' : ''} knocked` : 'clean round';
@@ -173,6 +196,13 @@ class Hurdles extends Sprint {
 
   frame(dt, paused) {
     super.frame(dt, paused);
+    // the beat guide: which of the five beats before the next hurdle the runner is on
+    for (const m of this.meters) {
+      const ru = m.ru, hx = HURDLES[ru.next];
+      const prev = ru.next > 0 ? HURDLES[ru.next - 1] : hx - 25.5;
+      const k = hx == null || !ru.started ? -1 : Math.floor(clamp((ru.x - (prev - MARK) ) / ((hx - prev) / 5), 0, 4.999));
+      m.beat.forEach((d, i) => d.classList.toggle('on', i === k));
+    }
     if (!this.pencilMesh || paused) return;
     let any = false;
     this.pencils.forEach((p, i) => { if (p.t >= 0 && p.t < 1) { p.t = Math.min(1, p.t + dt / 0.38); this.placePencil(p, i); any = true; } });
@@ -182,13 +212,13 @@ class Hurdles extends Sprint {
 
 export default {
   id: 'hurdles', name: 'Hurdles', season: 'Summer',
-  blurb: 'The chalk track again, now with ten pencil-and-domino hurdles in every lane.',
+  blurb: 'The chalk track with ten pencil-and-domino hurdles per lane: tap, tap, tap, tap, jump!',
   venue: 'The playroom floor: in every lane, ten pencils balanced on dominoes, with a chalk mark to jump from.',
   loading: 'Balancing pencils on dominoes…',
   how: [
     { verb: 'Timing', text: 'In the blocks, hold <b>action</b> and let go on the <b>whistle</b>.' },
-    { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to run: a steady beat is fastest.' },
-    { verb: 'Timing', text: 'Tap <b>action</b> to jump, right at the <b>chalk mark</b> before each hurdle. Clip a pencil and you slow down; run into one and down you go.' },
+    { verb: 'Rhythm', text: 'Tap <b>left</b> or <b>right</b> on a steady beat to run: no need to swap, no need to rush.' },
+    { verb: 'Timing', text: 'Tap <b>action</b> to jump at the <b>chalk mark</b>. Keep the beat and it goes tap, tap, tap, tap, <b>jump</b> for every hurdle. Clip a pencil and you slow down; run into one and down you go.' },
   ],
   better: 'lower',
   resultsDelay: 0.9,

@@ -14,7 +14,7 @@
     out[skill] = ts.join(' ');
   }
   const H = Array.from({ length: 10 }, (_, k) => 39 + k * 25.5);
-  for (const [name, cad, aim, err] of [['good human', 7.2, 0.5, 0.02], ['sloppy human', 6.5, 0.5, 0.09], ['no jumps', 7, null, 0]]) {
+  for (const [name, cad, aim, err] of [['good human', 4.7, 0.5, 0.02], ['sloppy human', 4.4, 0.5, 0.1], ['masher', 8, 0.5, 0.02], ['no jumps', 4.7, null, 0]]) {
     await g.load(def, base, { skill: 'hard', seed: 5 });
     g.start();
     const ev = g.ev, pad = g.competitors[0].pad, ru = ev.runners[0];
@@ -35,8 +35,7 @@
           if (tTo <= e) { jumpedFor = k; pad.push('action', true, g.time); pad.push('action', false, g.time + 0.05); }
         }
       }
-      pad.push(side, true, t); pad.push(side, false, t + 0.03);
-      side = side === 'left' ? 'right' : 'left';
+      pad.push('right', true, t); pad.push('right', false, t + 0.03);
       t += 1 / cad;
     }
     out[name] = `${ru.time ? ru.time.toFixed(2) : 'dnf'} clips ${ru.clips} falls ${ru.falls}`;

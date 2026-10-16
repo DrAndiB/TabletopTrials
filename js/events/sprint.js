@@ -31,6 +31,8 @@ const laneZ = (lane) => (1.5 - lane) * LANE;
 export class Sprint {
   constructor(ctx, opt = {}) {
     this.vmax = opt.vmax ?? VMAX;
+    this.target = opt.target ?? TARGET;
+    this.zones = opt.zones ?? true;     // drive / top speed / last stretch
     this.ctx = ctx;
     this.r = ctx.rand;
     this.phase = 'pre';
@@ -74,11 +76,11 @@ export class Sprint {
       fig.root.rotation.y = Math.PI / 2;
       g.add(fig.root);
       const run = {
-        c, fig, lane, z, x: -6, v: 0, rhythm: new Rhythm({ target: TARGET }),
+        c, fig, lane, z, x: -6, v: 0, rhythm: this.makeRhythm(),
         started: false, tGo: null, reaction: null, finished: false, tFinish: null, time: null,
         anim: 0, effort: 0, effortAnim: 0, runW: 0, stumbleT: 0, cards: 0, heldBack: false, block: false, slipT: 0, zone: 'drive',
         bot: c.human ? null : new BotTapper(c.pad, rng(c.seed * 31 + 7)),
-        botCad: TARGET * (BOT_PACE[this.ctx.skillName] || BOT_PACE.normal).cad * (0.97 + this.r() * 0.06),
+        botCad: this.target * (BOT_PACE[this.ctx.skillName] || BOT_PACE.normal).cad * (0.97 + this.r() * 0.06),
         pose: POSES.stand(0), idle: this.r() * 10, place: null, beat: 0,
       };
       this.runners.push(run);
@@ -417,6 +419,15 @@ export class Sprint {
     for (const ru of this.runners) ru.c.pad.clear?.();
   }
 
+  makeRhythm() { return new Rhythm({ target: this.target }); }
+
+  // the start call tells humans to hold their action key in the blocks
+  marksText() {
+    const humans = this.runners.filter((ru) => ru.c.human);
+    if (!humans.length) return 'On your marks';
+    return `On your marks · hold ${humans.every((ru) => ru.c.type === 'touch') ? '●' : 'action'}`;
+  }
+
   setMessage(text, kind = '', color = '#fff', dur = 0) { this.ctx.hud.message(text, kind, color, dur); }
 
   // fixed step
@@ -428,7 +439,7 @@ export class Sprint {
 
     if (P === 'walk') {
       for (let i = 0; i < this.runners.length; i++) ctx.presses(i);
-      if (this.t > 0.6 && !this.marksCalled) { this.marksCalled = true; this.setMessage('On your marks', 'small'); ctx.sound.block(false); }
+      if (this.t > 0.6 && !this.marksCalled) { this.marksCalled = true; this.setMessage(this.marksText(), 'small'); ctx.sound.block(false); }
       if (this.t > 1.9) { this.phase = 'marks'; this.t = 0; }
     } else if (P === 'marks') {
       for (let i = 0; i < this.runners.length; i++) ctx.presses(i);
@@ -436,7 +447,8 @@ export class Sprint {
         this.phase = 'set'; this.t = 0;
         this.runners.forEach((ru, i) => { ru.block = ru.c.human && ctx.held(i).action; });
         this.setMessage('Set', 'small', '#ffc93c'); ctx.sound.block(true);
-        this.whistleIn = 1.2 + this.r() * 1.0;
+        // the whistle never comes at the same moment twice
+        this.whistleIn = 1.0 + this.r() * 2.3;
         // computer kids very rarely jump the gun
         for (const ru of this.runners) {
           ru.cpuJump = !ru.c.human && !ru.heldBack && this.r() < (FS_CHANCE[ctx.skillName] ?? 0.01) ? 0.35 + this.r() * (this.whistleIn - 0.45) : null;
@@ -455,7 +467,7 @@ export class Sprint {
       if (this.t >= this.whistleIn) this.go(now);
     } else if (P === 'false') {
       for (let i = 0; i < this.runners.length; i++) ctx.presses(i);
-      if (this.t > 2.4) { this.phase = 'marks'; this.t = 0; this.setMessage('On your marks', 'small'); ctx.sound.block(false); }
+      if (this.t > 2.4) { this.phase = 'marks'; this.t = 0; this.setMessage(this.marksText(), 'small'); ctx.sound.block(false); }
     } else if (P === 'race' || P === 'finishing') {
       this.race(dt, now);
     } else if (P === 'replay') {
@@ -508,8 +520,8 @@ export class Sprint {
     for (let i = 0; i < this.runners.length; i++) {
       const ru = this.runners[i];
       // which part of the race this runner is in
-      ru.zone = ru.x < DRIVE_X ? 'drive' : ru.x < FATIGUE_X ? 'top' : 'tired';
-      ru.rhythm.target = TARGET * (ru.zone === 'drive' ? DRIVE_TARGET : ru.zone === 'tired' ? FATIGUE_TARGET : 1);
+      ru.zone = !this.zones ? 'top' : ru.x < DRIVE_X ? 'drive' : ru.x < FATIGUE_X ? 'top' : 'tired';
+      ru.rhythm.target = this.target * (ru.zone === 'drive' ? DRIVE_TARGET : ru.zone === 'tired' ? FATIGUE_TARGET : 1);
       if (ru.bot && !ru.finished) {
         const pace = BOT_PACE[ctx.skillName] || BOT_PACE.normal;
         const f = ru.zone === 'drive' ? 1 + (DRIVE_TARGET - 1) * pace.drive : ru.zone === 'tired' ? 1 + (FATIGUE_TARGET - 1) * pace.fatigue : 1;
@@ -554,6 +566,7 @@ export class Sprint {
         }
         // tired legs: an uneven beat costs more
         if (ru.zone === 'tired') eff *= 1 - clamp((ru.rhythm.unsteadiness() - 0.26) * 0.8, 0, 0.18);
+        if (this.tuneEffort) eff = this.tuneEffort(ru, x, eff);
         ru.over = x;
       }
       if (ru.slipT > 0) ru.slipT -= dt;
@@ -758,7 +771,7 @@ export class Sprint {
         : ph === 'set' ? (ru.block ? 'let go on GO!' : `hold ${touch ? '●' : 'action'}!`)
           : !ru.started ? (ru.block ? 'let go!' : `${touch ? '◀ ▶' : 'left, right'}…`)
             : ru.finished ? '' : (this.tipFor?.(ru) ?? (ru.zone === 'drive' ? (fast ? 'easy! smooth steps' : 'drive: smooth steps') : ru.zone === 'top' ? 'top speed: keep the beat' : 'dig in: a bit faster!'));
-      if (tip !== m.tipText) { m.tip.textContent = tip; m.tipText = tip; }
+      void tip;
       const zi = ru.zone === 'drive' ? 0 : ru.zone === 'top' ? 1 : 2;
       m.zones.forEach((z, n) => z.classList.toggle('on', ru.started && n <= zi));
       m.note.classList.toggle('on', m.ru.beat > 0);
@@ -780,9 +793,15 @@ export class Sprint {
     } else if (P === 'done') {
       want = { x: FINISH + 24, y: 4, z: 0, yaw: 0.25 + Math.sin(tt * 0.2) * 0.1, pitch: 0.36, width: 76 };
     } else {
-      const lx = this.leader ? this.leader.x : 0;
-      const cx = Math.min(lx - 11, FINISH + 4);
-      want = { x: Math.max(cx, 14), y: 4, z: 0, yaw: 0, pitch: 0.58, width: 76 };
+      // follow the human runners (all of them if several), and take the leader in when close
+      const humans = this.runners.filter((ru) => ru.c.human && !(ru.finished && ru.x > FINISH + 30));
+      const focus = humans.length ? humans : this.leader ? [this.leader] : [];
+      let lo = Math.min(...focus.map((ru) => ru.x)), hi = Math.max(...focus.map((ru) => ru.x));
+      if (!focus.length) { lo = 0; hi = 0; }
+      if (this.leader && this.leader.x > hi && this.leader.x - lo < 52) hi = this.leader.x;
+      const width = clamp(hi - lo + 64, 76, 130);
+      const cx = Math.min((lo + hi) / 2 + 8, FINISH + 4);
+      want = { x: Math.max(cx, 14), y: 4, z: 0, yaw: 0, pitch: 0.58, width };
     }
     const fast = P === 'replay' ? 30 : P === 'race' || P === 'finishing' ? 4 : 1.6;
     for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], fast, Math.min(dt, 0.1));
