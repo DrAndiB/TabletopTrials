@@ -7,7 +7,7 @@ import { Figurine, POSES, REST, blendPose } from '../figurine.js';
 import { crowd, banner } from '../props.js';
 import { Particles } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
-import { hudKit, Card, Guide, Tags } from './common.js';
+import { hudKit, Card, Guide, Tags, Skipper } from './common.js';
 
 const FB = 14, RP = 22, VW = 4;       // flat bottom width, transition radius, vertical wall above it
 const H = RP + VW;                    // lip height
@@ -83,6 +83,7 @@ class Halfpipe {
     this.card = new Card(kit);
     this.guide = new Guide(kit, [{ key: 'en', label: 'Height' }]);
     this.tags = new Tags(kit, R);
+    this.skipper = new Skipper(this.ctx, kit);
     this.applyCamera(1);
   }
 
@@ -183,6 +184,7 @@ class Halfpipe {
     this.placeWaiting();
     rd.fig.setExpression('focus');
     if (rd.bot) rd.bot.go = 0.6 + rd.bot.r() * 0.6;
+    else this.skipper.update(false, false);
     this.ctx.competitors.forEach((c, i) => this.ctx.hud.chip(i, this.riders[i].runs.length ? `${this.riders[i].best}` : '', i === rd.i ? 'active' : ''));
     if (rd.c.human) this.ctx.hud.message(`${rd.c.short}: tap ${rd.c.type === 'touch' ? '●' : 'action'} to drop in`, 'small', '#fff');
     else this.ctx.hud.message('');
@@ -237,7 +239,8 @@ class Halfpipe {
       if (x === rd) q = e;
       if (x.c.human && e.some((y) => y.b === 'action' && y.down)) skip = true;
     }
-    if (rd.bot && skip && (this.phase === 'ready' || this.phase === 'ride')) { this.skipBot(); return; }
+    // watching a computer rider: action fast-forwards
+    this.skipper.update(!!rd.bot, skip);
     if (this.phase === 'ready') {
       if (q.some((e) => e.down && e.b === 'action') || this.t > 8) { this.phase = 'ride'; this.t = 0; ctx.hud.message(''); ctx.sound.whoosh(0.4); }
       return;
@@ -331,28 +334,6 @@ class Halfpipe {
     return { name, pts };
   }
 
-  // skip a computer run: play out the rest of it on paper, air by air
-  skipBot() {
-    const s = this.rs, rd = this.cur, b = rd.bot, B = BOT[this.ctx.skillName] || BOT.normal;
-    for (const k of ['left', 'right', 'action']) rd.c.pad.push(k, false, this.ctx.time());
-    b.holding = false;
-    let t = (XEND - s.x) / DRIFT, E = s.E;
-    while (t > 0) {
-      const q = clamp(B.pump[0] + b.r.gauss() * B.pump[1], 0, 1);
-      E = Math.min(EMAX, E - LOSS + PUMP * (0.4 + 0.6 * q));
-      if (E <= H + 0.3) { t -= 1.4; continue; }
-      const h = E - H, T = (2 * Math.sqrt(2 * G * h)) / G;
-      const halves = clamp(Math.floor((T - 0.3) * SPIN * 2 * B.spin + b.r() * 0.7), 0, 6);
-      const grab = b.r() < B.grab && T > 0.7 ? 0.4 : 0;
-      const quality = b.r() < B.land ? (b.r() < 0.5 ? 'crash' : 'sketchy') : 'clean';
-      const { name, pts } = this.airPoints(h, halves, grab, quality, s.airs);
-      s.airs.push({ name, pts, quality }); s.score += pts;
-      if (quality === 'crash') E = H * 0.72;
-      t -= T + 1.2;
-    }
-    s.air = null; s.crashT = 0; s.x = XEND;
-    this.endRun();
-  }
 
   endRun() {
     const s = this.rs, rd = this.cur, ctx = this.ctx;
@@ -397,7 +378,7 @@ class Halfpipe {
   updateCard() {
     const rd = this.cur, s = this.rs;
     const humans = this.riders.some((x) => x.c.human);
-    const line = rd ? `Run ${this.run} of ${RUNS} · ${s ? s.score : 0} pts${rd.runs.length ? ` · best ${rd.best}` : ''}${rd.bot && humans ? ' · action skips' : ''}` : 'Best runs';
+    const line = rd ? `Run ${this.run} of ${RUNS} · ${s ? s.score : 0} pts${rd.runs.length ? ` · best ${rd.best}` : ''}${rd.bot && humans ? ' · action: fast-forward' : ''}` : 'Best runs';
     const ranked = [...this.riders].filter((x) => x.runs.length).sort((a, b) => b.best - a.best);
     this.card.set(rd ? rd.c : null, line, ranked.map((x) => ({ c: x.c, text: `${x.best}`, me: x === rd })));
   }
