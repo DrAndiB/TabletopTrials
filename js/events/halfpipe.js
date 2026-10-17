@@ -1,7 +1,7 @@
 // Halfpipe: a big sheet of cardboard bent into a U between two walls of books, dusted with icing sugar,
 // ridden on a lolly-stick snowboard. Tap ACTION to drop in and to pump each time you cross the flat
-// bottom (higher next air). In the air, tap LEFT or RIGHT for each half spin and hold ACTION to grab.
-// Land with the spin finished and the grab let go. Two runs, the better one counts.
+// bottom (higher next air). In the air, hold LEFT or RIGHT to spin (letting go finishes the half turn)
+// and hold ACTION to grab. Land with the spin finished and the grab let go. Two runs, the better counts.
 import * as THREE from '../../vendor/three.bundle.js';
 import { Figurine, POSES, REST, blendPose } from '../figurine.js';
 import { crowd, banner } from '../props.js';
@@ -13,15 +13,18 @@ const FB = 14, RP = 22, VW = 4;       // flat bottom width, transition radius, v
 const H = RP + VW;                    // lip height
 const QT = FB / 2 + (Math.PI / 2) * RP, QL = QT + VW;   // where the transition ends, and the lip (along the surface)
 const ZL = FB / 2 + RP;               // how far the walls are from the middle
-const LEN = 270, X0 = 14, XEND = LEN - 16, DRIFT = 9.5;
-const G = 30, LOSS = 1.9, PUMP = 4.4, EMAX = H + 17;
-const SPIN = 1.3;                     // turns per second
+const LEN = 290, X0 = 14, XEND = LEN - 16, DRIFT = 11.5;
+const G = 36, LOSS = 1.3, PUMP = 5.5, EMAX = H + 20;
+const DROP = 7;                       // dropping in from the start box gives this much air straight away
+const PUMP_W = FB / 2 + 4;            // the pump works on the flat and the foot of the walls
+const SPIN = 1.6;                     // turns per second while spinning
 const RUNS = 2;
 const SPIN_PTS = { 0: 0, 1: 4, 2: 9, 3: 15, 4: 22, 5: 30, 6: 40 };   // by half turns
+// computer riders: pump quality, share of the possible spin they go for, grab chance, mistake chance
 const BOT = {
-  easy: { pump: [0.55, 0.2], spin: 0.4, grab: 0.2, land: 0.22 },
-  normal: { pump: [0.75, 0.15], spin: 0.65, grab: 0.45, land: 0.12 },
-  hard: { pump: [0.9, 0.08], spin: 0.88, grab: 0.65, land: 0.05 },
+  easy: { pump: [0.35, 0.25], spin: 0.25, grab: 0.1, land: 0.25 },
+  normal: { pump: [0.5, 0.2], spin: 0.4, grab: 0.25, land: 0.15 },
+  hard: { pump: [0.78, 0.12], spin: 0.7, grab: 0.5, land: 0.08 },
 };
 
 // the U: position (z, y) and wall angle at a distance q along the surface from the middle (+q = right)
@@ -175,7 +178,7 @@ class Halfpipe {
       if (this.run < RUNS) { this.run++; this.turn = 0; this.ctx.hud.message('Second run', 'small', '#ffc93c', 1.4); } else { this.finishAll(); return; }
     }
     const rd = this.cur = this.riders[this.turn];
-    this.rs = { x: X0, q: QL, dir: -1, E: H, air: null, score: 0, airs: [], pumped: false, lastCross: -1, wipe: 0, crashT: 0, history: [] };
+    this.rs = { x: X0, q: QL, dir: -1, E: H + DROP, air: null, score: 0, airs: [], pumped: false, lastCross: -1, wipe: 0, crashT: 0, history: [] };
     this.phase = 'ready'; this.t = 0;
     this.placeWaiting();
     rd.fig.setExpression('focus');
@@ -193,22 +196,26 @@ class Halfpipe {
     if (this.phase === 'ready' && this.t > b.go) tap('action');
     if (this.phase !== 'ride') return;
     if (!s.air) {
+      if (b.plan) { pad.push('left', false, now); pad.push('right', false, now); }
       b.plan = null;
-      // pump somewhere on the flat, better riders nearer the middle
-      if (Math.abs(s.q) < FB / 2 && !s.pumped && b.pumpAt == null) b.pumpAt = clamp(1 - (B.pump[0] + b.r.gauss() * B.pump[1]), 0, 1) * (FB / 2);
+      // pump somewhere in the window, better riders nearer the middle
+      if (Math.abs(s.q) < PUMP_W && !s.pumped && b.pumpAt == null && Math.sign(s.q) !== s.dir) b.pumpAt = clamp(1 - (B.pump[0] + b.r.gauss() * B.pump[1]), 0, 1) * PUMP_W;
       if (b.pumpAt != null && Math.abs(s.q) <= b.pumpAt + 0.4 && !s.pumped) { tap('action'); b.pumpAt = null; }
-      if (Math.abs(s.q) > FB / 2) b.pumpAt = null;
+      if (Math.abs(s.q) > PUMP_W) b.pumpAt = null;
       if (b.holding) { pad.push('action', false, now); b.holding = false; }
       return;
     }
     const a = s.air;
     if (!b.plan) {
-      // what fits in this air: half turns at the spin rate, maybe a grab
-      const halves = Math.floor((a.T - 0.25) * SPIN * 2 * B.spin + b.r() * 0.6);
-      b.plan = { halves: clamp(halves, 0, 6), dir: b.r() < 0.5 ? 'left' : 'right', done: 0, grab: b.r() < B.grab && a.T > 0.7, grabEnd: a.T - 0.22 - b.r() * 0.2 + (b.r() < B.land ? 0.3 : 0), extra: b.r() < B.land ? 1 : 0 };
+      // what fits in this air: half turns at the spin rate, maybe a grab; now and then a mistake
+      const halves = clamp(Math.floor((a.T - 0.3) * SPIN * 2 * B.spin + b.r() * 0.7), 0, 6);
+      const oops = b.r() < B.land;
+      b.plan = { halves: halves + (oops && b.r() < 0.6 ? 1 : 0), dir: b.r() < 0.5 ? 'left' : 'right', grab: b.r() < B.grab && a.T > 0.7, grabEnd: a.T - 0.2 - b.r() * 0.2 + (oops ? 0.25 : 0) };
     }
     const p = b.plan;
-    if (p.done < p.halves + p.extra && a.t > 0.05 + p.done * 0.06) { tap(p.dir); p.done++; }
+    // hold the spin until the last half turn is under way, then let go (it finishes by itself)
+    const want = p.halves > 0 && a.t > 0.06 && a.spun < (p.halves - 1) / 2 + 0.08;
+    pad.push(p.dir, want, now);
     const wantGrab = p.grab && a.t > 0.15 && a.t < p.grabEnd;
     if (wantGrab !== !!b.holding) { pad.push('action', wantGrab, now); b.holding = wantGrab; }
   }
@@ -245,12 +252,12 @@ class Halfpipe {
     const held = ctx.held(rd.i);
     if (s.air) {
       const a = s.air;
-      for (const e of q) {
-        if (!e.down) continue;
-        if (e.b === 'left' || e.b === 'right') { a.goal += 0.5; a.spinDir = a.spinDir || (e.b === 'left' ? -1 : 1); }
-      }
       a.t += dt;
-      if (a.spun < a.goal) a.spun = Math.min(a.goal, a.spun + SPIN * dt);
+      // hold left or right to spin that way; let go and the half turn under way finishes by itself
+      const dirHeld = held.left && !held.right ? -1 : held.right && !held.left ? 1 : 0;
+      if (dirHeld && !a.spinDir) a.spinDir = dirHeld;
+      a.spinning = dirHeld !== 0 && dirHeld === a.spinDir && a.t > 0.04;
+      if (a.spinning) { a.spun += SPIN * dt; a.goal = Math.ceil(a.spun * 2 - 1e-6) / 2; } else if (a.spun < a.goal) a.spun = Math.min(a.goal, a.spun + SPIN * dt);
       a.grabbing = held.action && a.t > 0.08;
       if (a.grabbing) { a.grabT += dt; a.lastGrab = a.t; }
       if (a.t >= a.T) this.landAir();
@@ -260,10 +267,10 @@ class Halfpipe {
       s.q = damp(s.q, 0, 2.2, dt); s.v = 0;
       if (s.crashT <= 0) { s.E = H * 0.62; s.dir = s.q > 0 ? -1 : 1; s.pumped = false; }
     } else {
-      for (const e of q) if (e.down && e.b === 'action' && Math.abs(s.q) <= FB / 2 + 1 && !s.pumped) {
-        const qual = clamp(1 - Math.abs(s.q) / (FB / 2 + 1), 0, 1);
+      for (const e of q) if (e.down && e.b === 'action' && Math.abs(s.q) <= PUMP_W && !s.pumped) {
+        const qual = clamp(1 - (Math.abs(s.q) / PUMP_W) * 0.85, 0, 1);
         s.pumped = true; s.pumpQ = qual;
-        s.E = Math.min(EMAX, s.E + PUMP * (0.35 + 0.65 * qual));
+        s.E = Math.min(EMAX, s.E + PUMP * (0.4 + 0.6 * qual));
         if (rd.c.human) s.note = { text: qual > 0.7 ? 'great pump!' : 'pump', col: qual > 0.7 ? '#7be495' : '#fff1d6', t: 0 };
         ctx.sound.thump(0.25);
       }
@@ -299,11 +306,11 @@ class Halfpipe {
   landAir() {
     const s = this.rs, a = s.air, rd = this.cur, ctx = this.ctx;
     s.air = null; s.dir = -a.side; s.q = a.side * (QL - 0.01);
-    const left = (a.goal - a.spun) * 360;                          // degrees still to turn
+    const left = (a.goal - a.spun) * 360 + (a.spinning ? 45 : 0);  // degrees still to turn (still holding: more)
     const late = a.lastGrab >= 0 ? a.T - a.lastGrab : 9;           // time since the grab was let go
     let quality = 'clean';
-    if (left > 70 || late < 0.04) quality = 'crash';
-    else if (left > 25 || late < 0.14) quality = 'sketchy';
+    if (left > 80) quality = 'crash';
+    else if (left > 30 || late < 0.08) quality = 'sketchy';
     const { name, pts } = this.airPoints(a.h, Math.round(a.spun * 2), a.grabT, quality, s.airs);
     if (quality === 'crash') { s.crashT = 1.3; s.crashSpin = 0; ctx.sound.thump(0.6); ctx.sound.aww(); this.particles.emit(s.x, H * 0.8, a.side * (ZL - 2), { vx: 0, spread: 6, up: 4, color: 0xffffff, size: 0.9, life: 0.6, alpha: 0.7, grav: 14, n: 18 }); } else ctx.sound.thump(0.3);
     if (rd.c.human) s.note = { text: quality === 'crash' ? (left > 70 ? 'wipe-out: spin not finished' : 'wipe-out: still grabbing') : quality === 'sketchy' ? 'sketchy landing' : 'clean landing!', col: quality === 'clean' ? '#7be495' : quality === 'sketchy' ? '#ffc93c' : '#ff8a65', t: 0 };
@@ -318,7 +325,7 @@ class Halfpipe {
   airPoints(h, halves, grabT, quality, airs) {
     const name = `${halves ? `${halves * 180}` : ''}${grabT > 0.2 ? `${halves ? ' ' : ''}grab` : ''}` || 'air';
     let pts = Math.round(h * 0.9 + (SPIN_PTS[Math.min(6, halves)] ?? 40) + (grabT > 0.2 ? 4 + 8 * clamp(grabT / 0.6, 0, 1) : 0));
-    if (airs.some((x) => x.name === name && x.quality !== 'crash')) pts = Math.round(pts * 0.5);   // the judges like variety
+    if (airs.some((x) => x.name === name && x.quality !== 'crash')) pts = Math.round(pts * 0.7);   // the judges like variety
     if (quality === 'sketchy') pts = Math.round(pts * 0.5);
     if (quality === 'crash') pts = 0;
     return { name, pts };
@@ -332,10 +339,10 @@ class Halfpipe {
     let t = (XEND - s.x) / DRIFT, E = s.E;
     while (t > 0) {
       const q = clamp(B.pump[0] + b.r.gauss() * B.pump[1], 0, 1);
-      E = Math.min(EMAX, E - LOSS + PUMP * (0.35 + 0.65 * q));
+      E = Math.min(EMAX, E - LOSS + PUMP * (0.4 + 0.6 * q));
       if (E <= H + 0.3) { t -= 1.4; continue; }
       const h = E - H, T = (2 * Math.sqrt(2 * G * h)) / G;
-      const halves = clamp(Math.floor((T - 0.25) * SPIN * 2 * B.spin + b.r() * 0.6), 0, 6);
+      const halves = clamp(Math.floor((T - 0.3) * SPIN * 2 * B.spin + b.r() * 0.7), 0, 6);
       const grab = b.r() < B.grab && T > 0.7 ? 0.4 : 0;
       const quality = b.r() < B.land ? (b.r() < 0.5 ? 'crash' : 'sketchy') : 'clean';
       const { name, pts } = this.airPoints(h, halves, grab, quality, s.airs);
@@ -430,8 +437,8 @@ class Halfpipe {
       // square to the wall at take-off and landing
       const a = s.air, u = a.t / a.T;
       y = H + a.vUp * a.t - 0.5 * G * a.t * a.t;
-      z = a.side * (ZL - 1.2 - 3.5 * Math.sin(Math.PI * u));
-      const k = Math.min(1, Math.min(u, 1 - u) / 0.24), up = k * k * (3 - 2 * k);
+      z = a.side * (ZL - 1.5 - 6 * Math.sin(Math.PI * u));
+      const k = Math.min(1, Math.min(u, 1 - u) / 0.1), up = k * k * (3 - 2 * k);
       tilt = -a.side * (Math.PI / 2) * (1 - up);
       spinA = (a.spinDir || 1) * a.spun * TAU;
       const grab = a.grabbing ? 1 : 0;
@@ -470,7 +477,7 @@ class Halfpipe {
     this.guide.show(!!show);
     if (show) {
       const touch = rd.c.type === 'touch', act = touch ? '●' : 'action', lr = touch ? '◀ ▶' : 'left/right';
-      this.guide.tip(ph === 'ready' ? `tap ${act} to drop in` : s.air ? `${lr}: half spin each tap · hold ${act}: grab · finish both before landing` : `tap ${act} as you cross the blue strip at the bottom to pump higher`);
+      this.guide.tip(ph === 'ready' ? `tap ${act} to drop in` : s.air ? `hold ${lr} to spin, let go to stop · hold ${act}: grab · let go of both before landing` : `tap ${act} as you cross the blue strip at the bottom to pump higher`);
       this.guide.bar('en', clamp((s.E - H * 0.7) / (EMAX - H * 0.7), 0, 1), { go: s.E > H + 6, mark: (H - H * 0.7) / (EMAX - H * 0.7), hide: ph === 'ready' });
     }
     if (!rd || !s || !rd.c.human || ph !== 'ride') { this.tags.hide('hp'); return; }
@@ -481,13 +488,15 @@ class Halfpipe {
       // what the trick is so far, and a warning when the landing is close
       const a = s.air, left = a.goal - a.spun, toLand = a.T - a.t;
       const k = Math.round(a.goal * 2) * 180;
-      const warn = toLand < 0.45 && (left > 0.05 || a.grabbing) ? `<span class="pill big" style="--tc:${Math.sin(tt * 14) > 0 ? '#ff8a65' : '#ffc93c'}">${a.grabbing ? 'let go!' : 'still spinning!'}</span><br>` : '';
-      html += `${warn}<span class="pill big" style="--tc:${left > 0.05 ? '#ffc93c' : '#7be495'}">${k ? k : 'air'}${a.grabbing || a.grabT > 0.2 ? ' grab' : ''}</span>`;
+      // how much more spin still fits before the landing
+      const room = Math.max(0, Math.floor((toLand - 0.12) * SPIN * 2 - left * 2)) * 180;
+      const warn = toLand < 0.4 && (left > 0.05 || a.spinning || a.grabbing) ? `<span class="pill big" style="--tc:${Math.sin(tt * 14) > 0 ? '#ff8a65' : '#ffc93c'}">${a.grabbing ? 'let go!' : 'stop spinning!'}</span><br>` : room ? `<span class="pill" style="--tc:#fff1d6">room for ${room}</span><br>` : '';
+      html += `${warn}<span class="pill big" style="--tc:${left > 0.05 || a.spinning ? '#ffc93c' : '#7be495'}">${k ? k : 'air'}${a.grabbing || a.grabT > 0.2 ? ' grab' : ''}</span>`;
       y = H + a.vUp * a.t - 0.5 * G * a.t * a.t + 11; z = a.side * (ZL - 4);
     } else {
       const p = surf(s.q);
       const coming = !s.pumped && s.crashT <= 0 && Math.sign(s.q) === -s.dir && Math.abs(s.q) < QT * 0.75;
-      const onStrip = Math.abs(s.q) <= FB / 2 + 1 && !s.pumped;
+      const onStrip = Math.abs(s.q) <= PUMP_W && !s.pumped;
       if (s.crashT > 0) html += '<span class="pill" style="--tc:#ff8a65">ouch!</span>';
       else if (onStrip) html += `<span class="pill big" style="--tc:${Math.sin(tt * 14) > 0 ? '#7be495' : '#fff1d6'}">pump now!</span>`;
       else if (coming) html += '<span class="pill" style="--tc:#fff1d6">pump at the bottom</span>';
@@ -522,7 +531,7 @@ export default {
   loading: 'Dusting the halfpipe with icing sugar…',
   how: [
     { verb: 'Timing', text: 'Tap <b>action</b> to drop in, then tap it each time you cross the <b>blue strip</b> at the bottom to pump: higher every time.' },
-    { verb: 'Steer', text: 'In the air, tap <b>left</b> or <b>right</b> for each half spin, and hold <b>action</b> to grab.' },
+    { verb: 'Steer', text: 'In the air, <b>hold left</b> or <b>right</b> to spin; let go and the half turn finishes by itself. Hold <b>action</b> to grab. The label over you says how much more spin still fits.' },
     { verb: 'Timing', text: 'Land with the spin finished and the grab let go, or it\'s a wipe-out. Mix your tricks: the judges like variety. Two runs.' },
   ],
   better: 'higher',

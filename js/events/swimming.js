@@ -15,7 +15,7 @@ const LANE_W = W / 4;
 const TARGET = 5.0, VMAX = 12.6, ACCEL = 2.2;
 const TURN_ZONE = [L - 17, L - 4];     // tap ACTION over the green tiles for a tumble turn
 const BODY = 7.6;                      // head to toes, lying in the water
-const DRAIN = [0.1, 0.15];             // air used per second: resting, plus at full effort
+const DRAIN = [0.06, 0.1];             // air used per second: resting, plus at full effort (a breath every ~6 s)
 const BREATH_T = 0.32;
 const M_PER_UNIT = 25 / L;             // the tub is a 25 m pool: two lengths make 50 m
 // computer swimmers: cadence share, breathe when air drops below, chance of a tumble turn

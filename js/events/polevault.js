@@ -14,7 +14,7 @@ const U = 4.75;                 // units per metre (a figurine is a 1.75 m vault
 const BOX_X = -2;               // where the straw plants
 const BAR_X = 5;                // the bar, between the two rulers
 const RUN_X = -80;
-const ZONE = [-22, -12], IDEAL = -17;    // the plant tape, and the best spot on it
+const ZONE = [-24, -10], IDEAL = -17;    // the plant tape, and the best spot on it
 const TARGET = 6.5, VMAX = 31, ACCEL = 1.9;
 const PL = 23;                  // the straw
 const SWING_T = 1.05;
@@ -290,7 +290,7 @@ class PoleVault {
     a.planted = true;
     // the best plant is in the middle of the tape; the straw can't reach from far back
     const off = a.x - IDEAL;
-    a.plantQ = clamp(1 - Math.abs(off) / 7, 0.15, 1);
+    a.plantQ = clamp(1 - Math.abs(off) / 9, 0.15, 1);
     if (a.x < ZONE[0] - 10) a.plantQ = 0.1;
     a.px = a.x; a.speed = a.v; a.relU = null;
     this.phase = 'swing'; this.t = 0; a.u = 0;
@@ -515,7 +515,8 @@ class PoleVault {
       const e = clamp(a.v / VMAX, 0, 1);
       this.guide.bar('sp', e, { go: e > 0.9 });
     }
-    if (!v || !v.c.human || !a) { this.tags.hide('pv'); return; }
+    if (!v || !v.c.human || !a) { this.tags.hide('pv'); this.tags.hide('pvr'); return; }
+    if (ph !== 'run' && ph !== 'ready') this.tags.hide('pvr');
     const note = a.note && a.note.t < 0.9 ? `<span class="pill" style="--tc:${a.note.col}">${a.note.text}</span><br>` : '';
     if (ph === 'swing') {
       // the let-go gauge: a half dial, the needle sweeping round with the swing
@@ -528,11 +529,18 @@ class PoleVault {
       const hd = this.handsAt(a.u);
       this.tags.place('pv', hd.x - 14, hd.y + 2, 0, 'center');
     } else if (ph === 'run' || ph === 'ready') {
-      const near = a.x > ZONE[0] - 26 && !a.planted;
-      const inZ = a.x >= ZONE[0] && a.x <= ZONE[1];
-      const pill = near ? `<span class="pill${inZ ? ' big' : ''}" style="--tc:${inZ ? '#7be495' : '#fff1d6'}">${inZ ? 'plant now: hold!' : 'green tape ahead'}</span>` : '';
+      // the plant ring: it closes on the runner's feet as they reach the best spot on the tape
+      const d = IDEAL - a.x, near = d < 34 && d > -10 && !a.planted;
+      const good = Math.abs(d) < 3;
+      const pill = near ? `<span class="pill${good ? ' big' : ''}" style="--tc:${good ? '#7be495' : '#fff1d6'}">${good ? 'plant now: hold!' : d > 0 ? 'plant when the ring closes' : 'plant!'}</span>` : '';
       this.tags.set('pv', `${note}${pill}`);
       this.tags.place('pv', a.x, 13, 0);
+      if (near) {
+        const rr = 14 + Math.min(40, Math.abs(d) * 1.4);
+        this.tags.set('pvr', `<svg width="120" height="120" viewBox="-60 -60 120 120"><circle r="14" fill="rgba(123,228,149,.35)" stroke="#2fae5a" stroke-width="4"/><circle r="${rr.toFixed(1)}" fill="none" stroke="${good ? '#2fae5a' : '#1f1a17'}" stroke-width="4"/></svg>`);
+        this.tags.place('pvr', a.x, 0.5, 0, 'center');
+      } else this.tags.hide('pvr');
+      return;
     } else if (note) { this.tags.set('pv', note); this.tags.place('pv', a.cx ?? a.x, (a.cy ?? 8) + 8, 0); } else this.tags.hide('pv');
   }
 
