@@ -1,6 +1,6 @@
 // Pole vault: a bendy drinking straw, a skewer for a bar on two rulers, a pillow to land on.
-// Tap LEFT/RIGHT in turn to run up, tap ACTION on the green tape to plant the straw, and tap ACTION
-// again as the straw straightens to push off over the bar. The bar goes up 20 cm at a time; two misses
+// Tap LEFT/RIGHT in turn to run up, press and hold ACTION on the green tape to plant the straw, and let
+// go of ACTION as the straw stands up straight to push off over the bar. The bar goes up 20 cm at a time; two misses
 // at a height and you're out. The best height cleared wins.
 import * as THREE from '../../vendor/three.bundle.js';
 import { Figurine, POSES, REST, blendPose } from '../figurine.js';
@@ -8,7 +8,7 @@ import { crowd, banner, floorMaterial } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D } from '../util.js';
-import { hudKit, Card, Guide, Tags } from './common.js';
+import { hudKit, Card, Guide, Tags, Skipper } from './common.js';
 
 const U = 4.75;                 // units per metre (a figurine is a 1.75 m vaulter)
 const BOX_X = -2;               // where the straw plants
@@ -17,8 +17,9 @@ const RUN_X = -80;
 const ZONE = [-22, -12], IDEAL = -17;    // the plant tape, and the best spot on it
 const TARGET = 6.5, VMAX = 31, ACCEL = 1.9;
 const PL = 23;                  // the straw
-const SWING_T = 0.95;
-const PUSH_U = 0.66;            // the moment in the swing to push off
+const SWING_T = 1.05;
+const PUSH_U = 0.7;             // the moment in the swing to let go: the straw stands upright
+const PUSH_W = 0.22;            // how far either side of it still gives some push
 const G = 30;
 const START_H = 4.8, STEP = 0.2, MISSES = 2;
 const SEGS = 16;
@@ -86,6 +87,7 @@ class PoleVault {
     this.card = new Card(kit);
     this.guide = new Guide(kit, [{ key: 'sp', label: 'Speed' }]);
     this.tags = new Tags(kit, R);
+    this.skipper = new Skipper(this.ctx, kit);
     this.applyCamera(1);
   }
 
@@ -208,11 +210,12 @@ class PoleVault {
       ctx.sound.clack(0);
     }
     const v = this.cur = this.queue.shift();
-    this.va = { x: RUN_X, v: 0, rhythm: new Rhythm({ target: TARGET }), started: false, anim: 0, plantQ: null, pushQ: null, planted: false, u: 0 };
+    this.va = { x: RUN_X, v: 0, rhythm: new Rhythm({ target: TARGET }), started: false, anim: 0, plantQ: null, pushQ: null, planted: false, u: 0, note: null };
+    if (!v.bot) this.skipper.update(false, false);
     this.phase = 'ready'; this.t = 0;
     this.placeWaiting();
     v.fig.setExpression('focus');
-    if (v.bot) { const B = BOT[this.ctx.skillName] || BOT.normal; v.bot.go = 0.4 + this.r() * 0.4; v.bot.started = false; v.bot.plantAt = IDEAL + this.r.gauss() * B.plant; v.bot.pushAt = PUSH_U + this.r.gauss() * B.push; v.bot.pushed = false; }
+    if (v.bot) { const B = BOT[this.ctx.skillName] || BOT.normal; v.bot.go = 0.4 + this.r() * 0.4; v.bot.started = false; v.bot.plantAt = IDEAL + this.r.gauss() * B.plant; v.bot.pushAt = PUSH_U + this.r.gauss() * B.push; }
     ctx.competitors.forEach((c, i) => ctx.hud.chip(i, this.vaulters[i].best != null ? fmtH(this.vaulters[i].best) : this.vaulters[i].out ? 'out' : '', i === v.i ? 'active' : ''));
     if (v.c.human) ctx.hud.message(`${v.c.short}: ${fmtH(this.bar)} · ${v.c.type === 'touch' ? 'tap ◀ ▶' : 'tap left, right'} to run`, 'small', '#fff');
     else ctx.hud.message('');
@@ -224,9 +227,9 @@ class PoleVault {
     if (this.phase === 'ready' && !b.started && this.t > b.go) { b.started = true; b.tap.start(now); }
     if ((this.phase === 'run' || this.phase === 'ready') && b.started) {
       b.tap.update(now, TARGET * B.cad, 0.08, 0.004);
-      if (a.x >= b.plantAt && !a.planted) { pad.push('action', true, now); pad.push('action', false, now + 0.04); }
+      if (a.x >= b.plantAt && !a.planted) pad.push('action', true, now);
     }
-    if (this.phase === 'swing') { b.tap.stop(); if (!b.pushed && a.u >= b.pushAt) { b.pushed = true; pad.push('action', true, now); pad.push('action', false, now + 0.04); } }
+    if (this.phase === 'swing') { b.tap.stop(); if (a.u >= b.pushAt) pad.push('action', false, now); }
   }
 
   update(dt) {
@@ -246,12 +249,13 @@ class PoleVault {
       if (x === v) q = e;
       if (x.c.human && e.some((y) => y.b === 'action' && y.down)) skip = true;
     }
-    // watching a computer vaulter? ACTION skips straight to how it went
-    if (v.bot && skip && (this.phase === 'ready' || this.phase === 'run')) { this.skipBot(); return; }
+    // watching a computer vaulter: action fast-forwards
+    this.skipper.update(!!v.bot, skip);
+    if (a.note) a.note.t += dt;
     if (this.phase === 'ready' || this.phase === 'run') {
       for (const e of q) {
+        if (e.b === 'action') { if (e.down && a.started) { this.plant(); break; } continue; }
         if (!e.down) continue;
-        if (e.b === 'action') { if (a.started) this.plant(); continue; }
         const res = a.rhythm.press(e.b, e.t);
         if (!a.started) { a.started = true; this.phase = 'run'; this.t = 0; ctx.hud.message(''); }
         if (res === 'stumble') { a.v *= 0.85; ctx.sound.stumble(); } else ctx.sound.step(v.c.human ? 0.8 : 0.4);
@@ -264,18 +268,19 @@ class PoleVault {
         if (a.x > BOX_X - 5) { this.miss('Ran through!'); return; }
       }
     } else if (this.phase === 'swing') {
-      for (const e of q) if (e.down && e.b === 'action' && a.pushQ == null) { a.pushQ = clamp(1 - Math.abs(a.u - PUSH_U) / 0.2, 0, 1); if (v.c.human) ctx.hud.flash(a.pushQ > 0.75 ? 'Great push!' : a.pushQ > 0.35 ? 'Push' : 'Off time', a.pushQ > 0.75 ? '#7be495' : '#fff'); }
+      // holding on through the swing; letting go is the push off the top of the straw
       a.u += dt / SWING_T;
-      if (a.u >= 1) this.release();
+      const let_go = q.some((e) => e.b === 'action' && !e.down) || !ctx.held(v.i).action;
+      if ((let_go && a.u > 0.06) || a.u >= 1.15) this.release();
     } else if (this.phase === 'air') {
       a.vy -= G * dt; a.cx += a.vx * dt; a.cy += a.vy * dt; a.airT += dt;
       // over the bar: does the body clear it?
-      if (!a.barDone && a.cx >= BAR_X - 1) { a.barDone = true; if (!a.clear) this.knockBar(); }
-      if (a.cy <= 10 && a.vy < 0 && a.cx > BAR_X + 3) this.land();
+      if (!a.barDone && a.cx >= BAR_X - 0.5) { a.barDone = true; if (!a.clear) this.knockBar(); }
+      if (a.cy <= 10.2 && a.vy < 0 && a.cx > BAR_X + 3) this.land();
       if (a.cy <= 4) this.land();
     } else if (this.phase === 'landed' || this.phase === 'miss') {
       if (skip && this.t > 0.6) this.t = Math.max(this.t, 2.0);
-      if (this.t > 2.3) this.next();
+      if (this.t > 2.6) this.next();
     }
   }
 
@@ -283,46 +288,36 @@ class PoleVault {
     const a = this.va, ctx = this.ctx, v = this.cur;
     if (a.planted) return;
     a.planted = true;
-    // the best plant is on the middle of the tape; the straw can't reach from far back
+    // the best plant is in the middle of the tape; the straw can't reach from far back
     const off = a.x - IDEAL;
     a.plantQ = clamp(1 - Math.abs(off) / 7, 0.15, 1);
     if (a.x < ZONE[0] - 10) a.plantQ = 0.1;
-    a.px = a.x; a.speed = a.v;
+    a.px = a.x; a.speed = a.v; a.relU = null;
     this.phase = 'swing'; this.t = 0; a.u = 0;
     ctx.sound.pop(); ctx.sound.whoosh(0.4);
-    if (v.c.human) ctx.hud.flash(a.plantQ > 0.75 ? 'Great plant!' : off < 0 ? 'Planted early' : 'Planted late', a.plantQ > 0.75 ? '#7be495' : '#ff8a65');
+    if (v.c.human) a.note = { text: a.plantQ > 0.75 ? 'great plant!' : off < 0 ? 'planted early' : 'planted late', col: a.plantQ > 0.75 ? '#7be495' : '#ff8a65', t: 0 };
   }
 
   release() {
-    const a = this.va;
-    const pushQ = a.pushQ ?? 0;
+    const a = this.va, v = this.cur, ctx = this.ctx;
+    a.relU = Math.min(1, a.u);
+    a.pushQ = clamp(1 - Math.abs(a.relU - PUSH_U) / PUSH_W, 0, 1);
+    if (v.c.human) a.note = { text: a.pushQ > 0.75 ? 'great push!' : a.relU < PUSH_U ? 'let go early' : 'let go late', col: a.pushQ > 0.75 ? '#7be495' : a.pushQ > 0.35 ? '#ffc93c' : '#ff8a65', t: 0 };
     // how high the body goes: speed into the straw, the plant, the push
-    const e = (a.speed / VMAX) ** 2;
-    a.height = Math.round((1.9 + 3.95 * e * (0.55 + 0.45 * a.plantQ) + 0.45 * pushQ) * 100) / 100;
-    a.clear = a.height >= this.bar + 0.02;
-    const top = this.handsAt(1);
-    a.cx = top.x + 1; a.cy = top.y + 2.5;
-    const peak = Math.max(a.cy + 0.5, a.height * U + 1.2);
-    a.vy = Math.sqrt(2 * G * (peak - a.cy));
-    const tPeak = a.vy / G;
-    a.vx = clamp((BAR_X + 0.5 - a.cx) / Math.max(0.15, tPeak), 3, 30);
-    a.airT = 0; a.barDone = false;
-    this.phase = 'air'; this.t = 0;
-  }
-
-  skipBot() {
-    const v = this.cur, a = this.va, B = BOT[this.ctx.skillName] || BOT.normal;
-    v.bot.tap.stop();
-    a.speed = VMAX * Math.min(1, B.cad) * (0.97 + 0.03 * this.r());
-    a.plantQ = clamp(1 - Math.abs(this.r.gauss() * B.plant) / 7, 0.15, 1);
-    a.pushQ = clamp(1 - Math.abs(this.r.gauss() * B.push) / 0.2, 0, 1);
-    a.px = IDEAL; a.planted = true;
     const e = (a.speed / VMAX) ** 2;
     a.height = Math.round((1.9 + 3.95 * e * (0.55 + 0.45 * a.plantQ) + 0.45 * a.pushQ) * 100) / 100;
     a.clear = a.height >= this.bar + 0.02;
-    if (!a.clear && a.height > this.bar - 0.6) this.knockBar();
-    a.cx = BAR_X + 14; a.cy = 10; a.airT = 1;
-    this.land();
+    const top = this.handsAt(a.relU);
+    a.p0 = this.swingPitch(a.relU);
+    a.cx = top.x - 5.5 * Math.sin(a.p0); a.cy = top.y - 5.5 * Math.cos(a.p0);
+    // the body rises to its peak over the bar, then drops onto the pillow
+    const peak = Math.max(a.cy + 0.5, a.height * U + 0.8);
+    a.vy = Math.sqrt(2 * G * (peak - a.cy));
+    a.tPeak = a.vy / G;
+    a.vx = clamp((BAR_X + 0.5 - a.cx) / Math.max(0.15, a.tPeak), 2, 30);
+    a.airT = 0; a.barDone = false;
+    this.phase = 'air'; this.t = 0;
+    ctx.sound.whoosh(0.5);
   }
 
   knockBar() {
@@ -391,22 +386,26 @@ class PoleVault {
   updateCard() {
     const v = this.cur;
     const humans = this.vaulters.some((x) => x.c.human);
-    const line = v ? `Bar ${fmtH(this.bar)} · ${v.marks.slice(-6).join(' ') || 'first jump'}${v.bot && humans ? ' · action skips' : ''}` : 'Final heights';
+    const line = v ? `Bar ${fmtH(this.bar)} · ${v.marks.slice(-6).join(' ') || 'first jump'}${v.bot && humans ? ' · action: fast-forward' : ''}` : 'Final heights';
     const ranked = [...this.vaulters].sort((a, b) => (b.best ?? -1) - (a.best ?? -1));
     this.card.set(v ? v.c : null, line, ranked.map((x) => ({ c: x.c, text: x.best != null ? fmtH(x.best) : x.out ? 'NH' : '–', me: x === v, out: x.out })));
   }
 
   // ---------------------------------------------------------------- per frame
   // the straw during the swing: from the box towards the hands, bending and shortening
+  // the straw during the swing: from the box towards the hands, standing up straight at PUSH_U
   handsAt(u) {
     const p0 = this.va.px ?? IDEAL;
     const a0 = Math.atan2(9.5, BOX_X - (p0 + 1.5));
-    const ang = Math.PI - a0 + (Math.PI / 2 - 0.12 - (Math.PI - a0)) * (u * u * (3 - 2 * u));
+    const k = Math.min(1, u / PUSH_U), sm = k * k * (3 - 2 * k);
+    const ang = Math.PI - a0 + (Math.PI / 2 - (Math.PI - a0)) * sm - 0.4 * Math.max(0, u - PUSH_U);
     const bend = this.bendAt(u);
     const chord = PL * (bend > 0.01 ? Math.sin(bend / 2) / (bend / 2) : 1);
     return { x: BOX_X + Math.cos(ang) * chord, y: Math.sin(ang) * chord, ang, bend };
   }
-  bendAt(u) { return 1.7 * Math.sin(Math.PI * Math.min(1, u * 1.15)) * (0.6 + 0.4 * (this.va.speed ?? VMAX) / VMAX); }
+  bendAt(u) { return 1.7 * Math.sin(Math.PI * Math.min(1, u / PUSH_U)) * (0.6 + 0.4 * (this.va.speed ?? VMAX) / VMAX); }
+  // the body's tilt in the swing: hang, rock back, then upside down along the straw
+  swingPitch(u) { const k = Math.min(1, u / PUSH_U), sm = k * k * (3 - 2 * k); return -2.95 * sm - 0.25 * Math.max(0, u - PUSH_U); }
 
   setStraw(v, bx, by, dirAng, bend) {
     // the chain starts at the bottom end and curls by `bend` in total
@@ -448,50 +447,60 @@ class PoleVault {
   poseVaulter(v, tt, dt, paused) {
     const a = this.va, fig = v.fig, root = fig.root;
     root.rotation.set(0, Math.PI / 2, 0);
+    fig.body.rotation.y = 0;
     if (this.phase === 'ready' || this.phase === 'run' || (this.phase === 'miss' && a.cx == null)) {
       fig.ground = true;
       root.position.set(a.x, 0, 0);
       if (!paused && a.v > 1) a.anim = (a.anim + Math.max(a.rhythm.cadence(tt), a.v / 6) * 0.5 * dt) % 1;
-      const carry = { shR: 0.9, elR: 1.2, abR: 0.2, shL: 0.6, elL: 1.4, abL: 0.25 };
+      // both hands on the straw at hip height, the right one behind
+      const carry = { shR: 0.75, elR: 1.0, abR: 0.25, shL: 0.9, elL: 0.9, abL: 0.2 };
       const pose = this.phase === 'run' ? { ...POSES.run(a.anim, clamp(a.v / VMAX, 0.25, 1)), ...carry } : { ...POSES.stand(tt), ...carry };
       if (this.phase === 'miss') Object.assign(pose, POSES.stand(tt), { head: 0.4, lean: 0.15 });
       fig.setPose(pose);
-      // the straw carried low in front, tip dropping as the box gets close
+      // the straw carried tip-up at the start, lowered towards the box on the way in
       fig.root.updateMatrixWorld(true);
       const h = fig.arms[1].el.localToWorld(this.v3.set(0, -1.1, 0));
-      const drop = clamp((a.x - (ZONE[0] - 50)) / 50, 0, 1);
-      const ang = 0.55 - 0.4 * drop;   // angle above the floor at the tip end
-      const len = PL - 3;
-      this.setStraw(v, h.x + Math.cos(ang) * len, Math.max(0.6, h.y - Math.sin(ang) * len), Math.PI - ang, 0);
+      const drop = this.phase === 'run' ? clamp((a.x - (RUN_X + 12)) / (ZONE[1] - (RUN_X + 12)), 0, 1) ** 1.6 : 0;
+      const ang = 1.15 - 1.28 * drop;
+      this.setStraw(v, h.x - Math.cos(ang) * 3, h.y - Math.sin(ang) * 3, ang, 0);
       return;
     }
     fig.ground = false;
-    let cx, cy, pitch, pose;
+    let cx, cy, pitch, twist = 0, pose;
     if (this.phase === 'swing') {
       const u = a.u, hd = this.handsAt(u);
-      // hanging below the hands, swinging the feet up and over
-      pitch = -2.7 * (u * u * (3 - 2 * u));
-      const hx = Math.sin(pitch), hy = Math.cos(pitch);
-      cx = hd.x - 5.5 * hx; cy = hd.y - 5.5 * hy;
-      this.setStraw(v, BOX_X, 0.3, hd.ang, hd.bend);
-      const tuck = Math.sin(Math.PI * u);
-      pose = { ...REST, shL: 3.0, shR: 3.0, elL: 0.1, elR: 0.1, abL: 0.05, abR: 0.05, hipL: 0.4 + 1.3 * tuck, hipR: 0.2 + 1.2 * tuck, kneeL: 0.6 + 0.9 * tuck, kneeR: 0.3 + 0.9 * tuck, head: 0.2 };
-    } else {
-      // over the bar and down onto the pillow
-      if (this.phase === 'air') { cx = a.cx; cy = a.cy; } else { cx = a.cx; cy = a.cy; }
-      const k = this.phase === 'air' ? clamp(a.airT / 0.9, 0, 1) : 1;
-      pitch = -2.7 - 0.9 * k + (this.phase !== 'air' ? 0 : 0) + (k > 0.6 ? (k - 0.6) * 4.5 : 0);
-      if (this.phase !== 'air') pitch = -1.7;
-      const arch = this.phase === 'air' ? Math.sin(Math.PI * Math.min(1, k * 1.3)) : 0;
-      pose = this.phase === 'air'
-        ? { ...REST, lean: -0.4 * arch, shL: 2.4 - 1.4 * k, shR: 2.4 - 1.4 * k, abL: 0.6, abR: 0.6, hipL: -0.3 * arch + 0.9 * k, hipR: -0.3 * arch + 0.9 * k, kneeL: 0.8 * arch, kneeR: 0.8 * arch, head: 0.5 }
-        : this.phase === 'landed' && this.t > 0.7 ? blendPose({ ...REST, shL: 2.8, shR: 2.8, abL: 0.5, abR: 0.5, hipL: 1.4, hipR: 1.4, kneeL: 0.3, kneeR: 0.3 }, POSES.cheer(tt), 0.5) : { ...REST, shL: 1.5, shR: 1.5, abL: 0.8, abR: 0.8, hipL: 1.2, hipR: 1.0, kneeL: 0.5, kneeR: 0.6 };
+      pitch = this.swingPitch(u);
+      cx = hd.x - 5.5 * Math.sin(pitch); cy = hd.y - 5.5 * Math.cos(pitch);
+      this.setStraw(v, BOX_X, 0.3, hd.ang - hd.bend / 2 + hd.bend / 2, hd.bend);
+      // take-off with the knee up, rock back with the hips bent, then straighten up along the straw
+      const k = Math.min(1, u / PUSH_U);
+      const rock = Math.sin(Math.PI * clamp((k - 0.15) / 0.75, 0, 1));
+      pose = { ...REST, shL: 3.0, shR: 3.0, elL: 0.1, elR: 0.15, abL: 0.05, abR: 0.05, head: 0.25 * rock,
+        hipL: 0.25 + 1.5 * rock + (k < 0.2 ? 0.9 * (1 - k / 0.2) : 0), hipR: 0.1 + 1.4 * rock, kneeL: 0.3 + 1.2 * rock * (1 - k), kneeR: 0.2 + 0.4 * rock * (1 - k), ankL: -0.4, ankR: -0.4 };
+    } else if (this.phase === 'air') {
+      // the turn on the way up (to face the bar), over the bar arched face-down, then rolling onto the back
+      cx = a.cx; cy = a.cy;
+      const up = clamp(a.airT / Math.max(0.1, a.tPeak), 0, 1), down = clamp((a.airT - a.tPeak) / 0.65, 0, 1);
+      pitch = a.airT < a.tPeak ? a.p0 + (-Math.PI - a.p0) * up : -Math.PI + (Math.PI / 2 + 0.2) * down;
+      twist = Math.PI * (up * up * (3 - 2 * up)) + Math.PI * down;
+      const arch = Math.sin(Math.PI * clamp((a.airT - a.tPeak * 0.6) / 0.6, 0, 1));
+      pose = { ...REST, lean: -0.55 * arch, head: 0.5 * arch, shL: 2.9 - 1.6 * down, shR: 2.9 - 1.6 * down, abL: 0.3 + 0.5 * down, abR: 0.3 + 0.5 * down, elL: 0.2, elR: 0.2,
+        hipL: -0.3 * arch + 0.7 * down, hipR: -0.3 * arch + 0.7 * down, kneeL: 0.6 * arch + 0.4 * down, kneeR: 0.6 * arch + 0.4 * down };
       // the straw springs back and falls away
-      const fall = clamp((this.phase === 'air' ? a.airT : 1) * 1.6, 0, 1);
+      const fall = clamp(a.airT * 1.6, 0, 1);
       this.setStraw(v, BOX_X - 1 - fall * 3, 0.3, Math.PI / 2 + 0.2 + fall * 1.2, 0);
+    } else {
+      // on the pillow, on the back: arms up for a clearance, hands on the head for a miss
+      cx = a.cx; cy = Math.max(a.cy, 10.2);
+      pitch = -Math.PI / 2 - 0.15; twist = 0;
+      const happy = this.phase === 'landed' && this.t > 0.5;
+      pose = happy ? { ...REST, shL: 2.7 + 0.25 * Math.sin(tt * 7), shR: 2.7 - 0.25 * Math.sin(tt * 7), abL: 0.6, abR: 0.6, elL: 0.3, elR: 0.3, hipL: 0.5, hipR: 0.4, kneeL: 0.6, kneeR: 0.5 }
+        : { ...REST, shL: 2.4, shR: 2.4, elL: 2.0, elR: 2.0, abL: 0.9, abR: 0.9, hipL: 0.8, hipR: 0.6, kneeL: 1.0, kneeR: 0.8, head: 0.3 };
+      this.setStraw(v, BOX_X - 4, 0.3, Math.PI / 2 + 1.4, 0);
     }
     pose.pitch = pitch;
     fig.setPose(pose);
+    fig.body.rotation.y = twist;
     const COM = 4.1;
     root.position.set(cx - COM * Math.sin(pitch), cy - COM * Math.cos(pitch), 0);
   }
@@ -502,22 +511,35 @@ class PoleVault {
     this.guide.show(!!show);
     if (show) {
       const touch = v.c.type === 'touch', act = touch ? '●' : 'action';
-      this.guide.tip(ph === 'swing' ? `tap ${act} as the straw straightens: push off!` : a.x > ZONE[0] - 30 ? `tap ${act} on the green tape to plant` : `tap ${touch ? '◀ ▶' : 'left, right'} in turn to run`);
+      this.guide.tip(ph === 'swing' ? `keep holding ${act}, let go when the needle is in the green` : a.x > ZONE[0] - 30 ? `on the green tape: press and hold ${act} to plant` : `tap ${touch ? '◀ ▶' : 'left, right'} in turn to run`);
       const e = clamp(a.v / VMAX, 0, 1);
       this.guide.bar('sp', e, { go: e > 0.9 });
     }
-    if (v && v.c.human && ph === 'swing' && a.pushQ == null) {
-      const near = Math.abs(a.u - PUSH_U) < 0.12;
-      this.tags.set('push', `<span class="pill" style="--tc:${near ? '#7be495' : '#fff1d6'}">push!</span>`);
+    if (!v || !v.c.human || !a) { this.tags.hide('pv'); return; }
+    const note = a.note && a.note.t < 0.9 ? `<span class="pill" style="--tc:${a.note.col}">${a.note.text}</span><br>` : '';
+    if (ph === 'swing') {
+      // the let-go gauge: a half dial, the needle sweeping round with the swing
+      const u = clamp(a.u / 1.15, 0, 1), lo = (PUSH_U - 0.09) / 1.15, hi = (PUSH_U + 0.09) / 1.15;
+      const arcPt = (k) => `${(-Math.cos(Math.PI * k) * 40).toFixed(1)} ${(-Math.sin(Math.PI * k) * 40).toFixed(1)}`;
+      const inZone = a.u >= PUSH_U - 0.09 && a.u <= PUSH_U + 0.09;
+      const nd = arcPt(u);
+      const svg = `<svg width="104" height="60" viewBox="-52 -50 104 60"><path d="M-40 0 A40 40 0 0 1 40 0" fill="none" stroke="#fff1d6" stroke-width="12"/><path d="M${arcPt(lo)} A40 40 0 0 1 ${arcPt(hi)}" fill="none" stroke="#2fae5a" stroke-width="12"/><path d="M-40 0 A40 40 0 0 1 40 0" fill="none" stroke="#1f1a17" stroke-width="2.5" transform="scale(1.16)"/><line x1="0" y1="0" x2="${nd.split(' ')[0]}" y2="${nd.split(' ')[1]}" stroke="#1f1a17" stroke-width="5" stroke-linecap="round"/><circle r="5" fill="#1f1a17"/></svg>`;
+      this.tags.set('pv', `${note}${svg}<br><span class="pill big" style="--tc:${inZone ? '#7be495' : '#fff1d6'}">${inZone ? 'let go!' : a.u < PUSH_U ? 'hold…' : 'too late!'}</span>`);
       const hd = this.handsAt(a.u);
-      this.tags.place('push', hd.x - 6, hd.y + 4, 0);
-    } else this.tags.hide('push');
+      this.tags.place('pv', hd.x - 14, hd.y + 2, 0, 'center');
+    } else if (ph === 'run' || ph === 'ready') {
+      const near = a.x > ZONE[0] - 26 && !a.planted;
+      const inZ = a.x >= ZONE[0] && a.x <= ZONE[1];
+      const pill = near ? `<span class="pill${inZ ? ' big' : ''}" style="--tc:${inZ ? '#7be495' : '#fff1d6'}">${inZ ? 'plant now: hold!' : 'green tape ahead'}</span>` : '';
+      this.tags.set('pv', `${note}${pill}`);
+      this.tags.place('pv', a.x, 13, 0);
+    } else if (note) { this.tags.set('pv', note); this.tags.place('pv', a.cx ?? a.x, (a.cy ?? 8) + 8, 0); } else this.tags.hide('pv');
   }
 
   applyCamera(dt) {
     const R = this.ctx.R, c = this.cam, ph = this.phase, a = this.va;
     let want;
-    if (ph === 'swing' || ph === 'air' || ph === 'landed' || (ph === 'miss' && a && a.cx != null)) want = { x: BAR_X + 2, y: 15, z: 0, yaw: -0.78, pitch: 0.2, width: 100 };
+    if (ph === 'swing' || ph === 'air' || ph === 'landed' || (ph === 'miss' && a && a.cx != null)) want = { x: BAR_X + 2, y: 18, z: 0, yaw: -0.78, pitch: 0.2, width: 94 };
     else if (ph === 'done') want = { x: RUN_X - 4, y: 6, z: -18, yaw: 0.25, pitch: 0.3, width: 70 };
     else { const ax = a ? a.x : RUN_X; want = { x: Math.min(ax + 24, BAR_X - 14), y: 7, z: 0, yaw: 0.2, pitch: 0.18, width: 78 }; }
     const rate = 3;
@@ -539,7 +561,7 @@ export default {
   loading: 'Bending the straws…',
   how: [
     { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to run up: faster run, higher jump.' },
-    { verb: 'Timing', text: 'Tap <b>action</b> on the <b>green tape</b> to plant the straw, then tap <b>action</b> again as it straightens to push off.' },
+    { verb: 'Timing', text: 'On the <b>green tape</b>, press and <b>hold action</b> to plant the straw. Keep holding, and <b>let go</b> when the needle beside you is in the green: that pushes you off the top.' },
     { verb: 'Timing', text: 'The bar goes up 20 cm each round. Two misses at a height and you\'re out. The best height wins.' },
   ],
   better: 'higher',

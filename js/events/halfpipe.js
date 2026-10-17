@@ -12,6 +12,7 @@ import { hudKit, Card, Guide, Tags } from './common.js';
 const FB = 14, RP = 22, VW = 4;       // flat bottom width, transition radius, vertical wall above it
 const H = RP + VW;                    // lip height
 const QT = FB / 2 + (Math.PI / 2) * RP, QL = QT + VW;   // where the transition ends, and the lip (along the surface)
+const ZL = FB / 2 + RP;               // how far the walls are from the middle
 const LEN = 270, X0 = 14, XEND = LEN - 16, DRIFT = 9.5;
 const G = 30, LOSS = 1.9, PUMP = 4.4, EMAX = H + 17;
 const SPIN = 1.3;                     // turns per second
@@ -72,7 +73,7 @@ class Halfpipe {
       stripe.position.y = 0.25; board.add(stripe);
       spin.add(board);
       K.group.add(rig);
-      this.riders.push({ c, i, fig, rig, spin, board, runs: [], best: 0, idle: this.r() * 10, home: { x: X0 - 6 - i * 6, z: -(QL + 10), y: H }, bot: c.human ? null : { r: rng(c.seed * 43 + 1) } });
+      this.riders.push({ c, i, fig, rig, spin, board, runs: [], best: 0, idle: this.r() * 10, home: { x: X0 - 6 - i * 7, z: -(ZL + 12), y: H + 0.6 }, bot: c.human ? null : { r: rng(c.seed * 43 + 1) } });
     });
     this.placeWaiting();
     const kit = hudKit(this.ctx);
@@ -254,14 +255,16 @@ class Halfpipe {
       if (a.grabbing) { a.grabT += dt; a.lastGrab = a.t; }
       if (a.t >= a.T) this.landAir();
     } else if (s.crashT > 0) {
+      // a wipe-out: sliding down the wall on your bottom, the board skidding beside you, then back up
       s.crashT -= dt;
-      this.slide(dt);
+      s.q = damp(s.q, 0, 2.2, dt); s.v = 0;
+      if (s.crashT <= 0) { s.E = H * 0.62; s.dir = s.q > 0 ? -1 : 1; s.pumped = false; }
     } else {
       for (const e of q) if (e.down && e.b === 'action' && Math.abs(s.q) <= FB / 2 + 1 && !s.pumped) {
         const qual = clamp(1 - Math.abs(s.q) / (FB / 2 + 1), 0, 1);
         s.pumped = true; s.pumpQ = qual;
         s.E = Math.min(EMAX, s.E + PUMP * (0.35 + 0.65 * qual));
-        if (rd.c.human) ctx.hud.flash(qual > 0.7 ? 'Great pump!' : 'Pump', qual > 0.7 ? '#7be495' : '#fff');
+        if (rd.c.human) s.note = { text: qual > 0.7 ? 'great pump!' : 'pump', col: qual > 0.7 ? '#7be495' : '#fff1d6', t: 0 };
         ctx.sound.thump(0.25);
       }
       this.slide(dt);
@@ -302,7 +305,8 @@ class Halfpipe {
     if (left > 70 || late < 0.04) quality = 'crash';
     else if (left > 25 || late < 0.14) quality = 'sketchy';
     const { name, pts } = this.airPoints(a.h, Math.round(a.spun * 2), a.grabT, quality, s.airs);
-    if (quality === 'crash') { s.E = H * 0.72; s.crashT = 0.9; ctx.sound.thump(0.6); ctx.sound.aww(); this.particles.emit(s.x, H * 0.8, a.side * (QL - 4), { vx: 0, spread: 6, up: 4, color: 0xffffff, size: 0.9, life: 0.6, alpha: 0.7, grav: 14, n: 18 }); } else ctx.sound.thump(0.3);
+    if (quality === 'crash') { s.crashT = 1.3; s.crashSpin = 0; ctx.sound.thump(0.6); ctx.sound.aww(); this.particles.emit(s.x, H * 0.8, a.side * (ZL - 2), { vx: 0, spread: 6, up: 4, color: 0xffffff, size: 0.9, life: 0.6, alpha: 0.7, grav: 14, n: 18 }); } else ctx.sound.thump(0.3);
+    if (rd.c.human) s.note = { text: quality === 'crash' ? (left > 70 ? 'wipe-out: spin not finished' : 'wipe-out: still grabbing') : quality === 'sketchy' ? 'sketchy landing' : 'clean landing!', col: quality === 'clean' ? '#7be495' : quality === 'sketchy' ? '#ffc93c' : '#ff8a65', t: 0 };
     s.airs.push({ name, pts, quality });
     s.score += pts;
     const col = quality === 'clean' ? '#7be495' : quality === 'sketchy' ? '#ffc93c' : '#ff8a65';
@@ -414,18 +418,21 @@ class Halfpipe {
     fig.root.rotation.set(0, Math.PI / 2, 0);
     rd.board.position.set(0, 0.22, 0); rd.board.rotation.set(0, Math.PI / 2, 0);
     if (this.phase === 'ready') {
-      rd.rig.position.set(s.x, H + 1, FB / 2 + RP + 3);
-      rd.rig.rotation.set(0, 0, 0); rd.spin.rotation.set(0, Math.PI, 0);
+      rd.rig.position.set(s.x, H + 1, ZL + 3);
+      rd.rig.rotation.set(0, 0, 0); rd.spin.rotation.set(0, Math.PI / 2 + 0.3, 0);
       fig.setPose({ ...POSES.stand(tt), hipL: 0.2, hipR: 0.2, kneeL: 0.4, kneeR: 0.4, abL: 0.5, abR: 0.5 });
       return;
     }
     let y, z, tilt, spinA = 0, pose;
     const crouch = { ...REST, y: -0.4, lean: 0.25, hipL: 0.55, hipR: 0.55, kneeL: 0.9, kneeR: 0.9, abL: 0.6, abR: 0.6, shL: 0.3, shR: 0.3, elL: 0.3, elR: 0.3, head: -0.1, spL: 0.25, spR: 0.25 };
     if (s.air) {
+      // straight up out of the pipe and back down the same wall: upright in the air for the tricks,
+      // square to the wall at take-off and landing
       const a = s.air, u = a.t / a.T;
       y = H + a.vUp * a.t - 0.5 * G * a.t * a.t;
-      z = a.side * (QL - 2.5 - 3 * Math.sin(Math.PI * u));
-      tilt = -a.side * (Math.PI / 2) * (1 - 0.65 * Math.sin(Math.PI * u));
+      z = a.side * (ZL - 1.2 - 3.5 * Math.sin(Math.PI * u));
+      const k = Math.min(1, Math.min(u, 1 - u) / 0.24), up = k * k * (3 - 2 * k);
+      tilt = -a.side * (Math.PI / 2) * (1 - up);
       spinA = (a.spinDir || 1) * a.spun * TAU;
       const grab = a.grabbing ? 1 : 0;
       s.grabK = damp(s.grabK ?? 0, grab, 16, dt);
@@ -435,7 +442,6 @@ class Halfpipe {
       y = p.y + 0.6; z = p.z; tilt = -p.ang;
       const pumpK = s.pumped && Math.abs(s.q) < FB ? 1 - Math.abs(s.q) / FB : 0;
       pose = blendPose(crouch, { ...crouch, y: -1.2, kneeL: 1.7, kneeR: 1.7, hipL: 1.1, hipR: 1.1 }, pumpK);
-      if (s.crashT > 0) pose = POSES.heap();
       if (this.phase === 'ended') pose = blendPose(crouch, POSES.cheer(tt), clamp(this.t * 2, 0, 1));
       // icing sugar spray when carving up and down the walls
       if (!paused && s.v > 12 && Math.random() < 0.4) this.particles.emit(s.x, y, z, { vx: 0, spread: 3, up: 2, color: 0xffffff, size: 0.55, life: 0.35, alpha: 0.6, grav: 10, n: 1 });
@@ -445,6 +451,16 @@ class Halfpipe {
     // face down the pipe, turned a little towards where you're riding
     const face = s.air ? 0 : -s.dir * 0.35;
     rd.spin.rotation.set(0, face + spinA, 0);
+    if (s.crashT > 0 && !s.air) {
+      // sitting in a heap on the wall, the board spinning away beside
+      if (!paused) s.crashSpin = (s.crashSpin || 0) + dt * 9 * Math.max(0.2, s.crashT);
+      fig.ground = false;
+      fig.root.position.set(0, 2.4, 0);
+      pose = { ...POSES.heap(), y: 0 };
+      rd.board.position.set(-1.5, 0.5, 4.5);
+      rd.board.rotation.set(s.crashSpin, Math.PI / 2 + s.crashSpin * 0.4, 0.3);
+      if (!paused && Math.random() < 0.3) this.particles.emit(s.x, y + 1, z, { vx: 0, spread: 4, up: 3, color: 0xffffff, size: 0.7, life: 0.4, alpha: 0.6, grav: 12, n: 2 });
+    }
     fig.setPose(pose);
   }
 
@@ -454,15 +470,30 @@ class Halfpipe {
     this.guide.show(!!show);
     if (show) {
       const touch = rd.c.type === 'touch', act = touch ? '●' : 'action', lr = touch ? '◀ ▶' : 'left/right';
-      this.guide.tip(ph === 'ready' ? `tap ${act} to drop in` : s.air ? `${lr}: half spin each tap · hold ${act}: grab · let go before landing` : `tap ${act} on the blue strip at the bottom to pump`);
+      this.guide.tip(ph === 'ready' ? `tap ${act} to drop in` : s.air ? `${lr}: half spin each tap · hold ${act}: grab · finish both before landing` : `tap ${act} as you cross the blue strip at the bottom to pump higher`);
       this.guide.bar('en', clamp((s.E - H * 0.7) / (EMAX - H * 0.7), 0, 1), { go: s.E > H + 6, mark: (H - H * 0.7) / (EMAX - H * 0.7), hide: ph === 'ready' });
     }
-    if (rd && s && s.air && rd.c.human) {
-      const a = s.air, left = a.goal - a.spun;
+    if (!rd || !s || !rd.c.human || ph !== 'ride') { this.tags.hide('hp'); return; }
+    if (s.note) s.note.t += 1 / 60;
+    const note = s.note && s.note.t < 1.0 ? `<span class="pill" style="--tc:${s.note.col}">${s.note.text}</span><br>` : '';
+    let html = note, y, z;
+    if (s.air) {
+      // what the trick is so far, and a warning when the landing is close
+      const a = s.air, left = a.goal - a.spun, toLand = a.T - a.t;
       const k = Math.round(a.goal * 2) * 180;
-      this.tags.set('air', `<span class="pill" style="--tc:${left > 0.05 ? '#ffc93c' : '#7be495'}">${k ? k : 'air'}${a.grabbing ? ' grab' : ''}</span>`);
-      this.tags.place('air', s.x, H + a.vUp * a.t - 0.5 * G * a.t * a.t + 12, a.side * (QL - 4));
-    } else this.tags.hide('air');
+      const warn = toLand < 0.45 && (left > 0.05 || a.grabbing) ? `<span class="pill big" style="--tc:${Math.sin(tt * 14) > 0 ? '#ff8a65' : '#ffc93c'}">${a.grabbing ? 'let go!' : 'still spinning!'}</span><br>` : '';
+      html += `${warn}<span class="pill big" style="--tc:${left > 0.05 ? '#ffc93c' : '#7be495'}">${k ? k : 'air'}${a.grabbing || a.grabT > 0.2 ? ' grab' : ''}</span>`;
+      y = H + a.vUp * a.t - 0.5 * G * a.t * a.t + 11; z = a.side * (ZL - 4);
+    } else {
+      const p = surf(s.q);
+      const coming = !s.pumped && s.crashT <= 0 && Math.sign(s.q) === -s.dir && Math.abs(s.q) < QT * 0.75;
+      const onStrip = Math.abs(s.q) <= FB / 2 + 1 && !s.pumped;
+      if (s.crashT > 0) html += '<span class="pill" style="--tc:#ff8a65">ouch!</span>';
+      else if (onStrip) html += `<span class="pill big" style="--tc:${Math.sin(tt * 14) > 0 ? '#7be495' : '#fff1d6'}">pump now!</span>`;
+      else if (coming) html += '<span class="pill" style="--tc:#fff1d6">pump at the bottom</span>';
+      y = p.y + 11; z = p.z;
+    }
+    if (html) { this.tags.set('hp', html); this.tags.place('hp', s.x, y, z); } else this.tags.hide('hp');
   }
 
   applyCamera(dt) {
@@ -470,8 +501,9 @@ class Halfpipe {
     let want;
     if ((ph === 'ride' || ph === 'ready' || ph === 'ended') && s) {
       // from down the pipe, looking back up at the rider
-      want = { x: s.x, y: H * 0.65, z: 0, yaw: Math.PI / 2 - 0.12, pitch: 0.24, width: ph === 'ready' ? 80 : 104 };
-    } else want = { x: X0, y: H, z: -QL - 8, yaw: Math.PI / 2 + 0.6, pitch: 0.3, width: 80 };
+      const ry = s.air ? H + s.air.vUp * s.air.t - 0.5 * G * s.air.t * s.air.t : surf(s.q).y;
+      want = { x: s.x, y: H * 0.42 + ry * 0.45, z: 0, yaw: Math.PI / 2 - 0.1, pitch: 0.22, width: ph === 'ready' ? 70 : 92 };
+    } else want = { x: X0, y: H, z: -ZL - 8, yaw: Math.PI / 2 + 0.6, pitch: 0.3, width: 80 };
     for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], 3, Math.min(dt, 0.1));
     R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: Math.max(180, c.width * 1.6) });
     R.setFocus(0.5, 0.36, 0.7);

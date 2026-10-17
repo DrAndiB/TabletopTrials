@@ -25,7 +25,7 @@ export class Game {
   async load(def, competitors, { skill = 'normal', round = 1, seed = 1, attract = false } = {}) {
     this.unload();
     this.def = def;
-    this.time = 0; this.acc = 0; this.paused = false;
+    this.time = 0; this.acc = 0; this.paused = false; this.speed = 1;
     this.competitors = competitors.map((c, i) => ({
       ...c, index: i,
       human: c.type !== 'cpu',
@@ -58,9 +58,12 @@ export class Game {
         return q;
       },
       held(i) { return game.competitors[i].pad.held; },
+      // fast-forward (watching a computer player's turn): 1 = normal speed
+      setSpeed(k) { game.speed = Math.max(1, k); },
+      get speed() { return game.speed; },
       hud: {
         el: this.hud.eventEl,
-        message: (text, kind, color) => this.hud.message(text, kind, color),
+        message: (text, kind, color, dur) => this.hud.message(text, kind, color, dur),
         flash: (text, color) => this.hud.flash(text, color),
         chip: (i, info, cls) => this.hud.chip(i, info, cls),
       },
@@ -68,6 +71,7 @@ export class Game {
       finish(results) {
         if (game.state === 'done') return;
         game.state = 'done';
+        game.speed = 1;
         game.onEventEnd?.({ def: game.def, results, competitors: game.competitors });
       },
     };
@@ -93,8 +97,10 @@ export class Game {
     if (!this.paused) {
       this.acc += dt;
       let n = 0;
-      while (this.acc >= STEP && n < 24) { this.time += STEP; this.ev.update(STEP); this.acc -= STEP; n++; }
-      if (n >= 24) this.acc = 0;
+      this.acc += dt * ((this.speed || 1) - 1);
+      const max = 24 * (this.speed || 1);
+      while (this.acc >= STEP && n < max) { this.time += STEP; this.ev.update(STEP); this.acc -= STEP; n++; }
+      if (n >= max) this.acc = 0;
     }
     this.frame(this.paused ? 0 : dt);
   }
@@ -114,6 +120,7 @@ export class Game {
   }
 
   unload() {
+    this.speed = 1;
     if (this.ev) { this.ev.dispose?.(); this.ev = null; }
     if (this.kit) { this.kit.dispose(); this.kit = null; }
     this.hud.eventEl.innerHTML = '';

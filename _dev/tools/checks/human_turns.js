@@ -36,8 +36,8 @@
     const t = g.time;
     if (ev.cur !== ev.vaulters[0]) { if (ev.phase === 'ready' || ev.phase === 'run') tap(pad, 'action', t); continue; }
     if ((ev.phase === 'ready' || ev.phase === 'run') && t >= next) { tap(pad, side, t); side = side === 'left' ? 'right' : 'left'; next = t + 1 / 6.6; }
-    if (ev.phase === 'run' && ev.va.x >= -17 && !ev.va.planted) tap(pad, 'action', t);
-    if (ev.phase === 'swing' && ev.va.u >= 0.66 && ev.va.pushQ == null) tap(pad, 'action', t);
+    if (ev.phase === 'run' && ev.va.x >= -17 && !ev.va.planted) pad.push('action', true, t);
+    if (ev.phase === 'swing' && ev.va.u >= 0.7) pad.push('action', false, t);
   }
   out.push('polevault human ' + ev.vaulters[0].best + ' ' + ev.vaulters[0].marks.join('') + ' vs ' + ev.vaulters.slice(1).map((v) => v.best).join('/'));
   // bobsled: push, jump in late, steer onto the line

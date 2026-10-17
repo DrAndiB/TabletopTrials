@@ -19,8 +19,14 @@ const CSS = `.ev-card{position:absolute;left:12px;top:12px;width:min(260px,42vw)
   .ev-g .bar i{position:absolute;inset:0 auto 0 0;width:0;background:#ef7d2c}.ev-g .bar.go i{background:#2fae5a}.ev-g .bar.low i{background:#e23b2e}
   .ev-g .bar u{position:absolute;top:0;bottom:0;background:#bfe6c7}
   .ev-g .bar b{position:absolute;top:0;bottom:0;width:4px;background:#1f1a17;margin-left:-2px}
-  .ev-tag{position:absolute;transform:translate(-50%,-100%);pointer-events:none;font:400 15px/1 "Lilita One",Impact,sans-serif;color:#fff;-webkit-text-stroke:1.6px #1f1a17;paint-order:stroke fill;white-space:nowrap;text-align:center}
-  .ev-tag .pill{display:inline-block;background:var(--tc,#ffc93c);color:#1f1a17;-webkit-text-stroke:0;border:2px solid #1f1a17;border-radius:99px;padding:3px 8px;font:800 11px/1 Rubik,sans-serif;text-transform:uppercase;letter-spacing:.05em}
+  .ev-tag{position:absolute;transform:translate(-50%,-100%);pointer-events:none;font:400 clamp(17px,1.8vw,24px)/1.1 "Lilita One",Impact,sans-serif;color:#fff;-webkit-text-stroke:2px #1f1a17;paint-order:stroke fill;white-space:nowrap;text-align:center}
+  .ev-tag .pill{display:inline-block;background:var(--tc,#ffc93c);color:#1f1a17;-webkit-text-stroke:0;border:2.5px solid #1f1a17;border-radius:99px;padding:4px 11px;margin:2px 0;font:800 clamp(13px,1.35vw,17px)/1 Rubik,sans-serif;text-transform:uppercase;letter-spacing:.04em;box-shadow:0 2px 0 #1f1a17}
+  .ev-tag .pill.big{font-size:clamp(16px,1.8vw,22px);padding:6px 14px}
+  .ev-beat{display:inline-block;position:relative;width:clamp(78px,8vw,112px);height:14px;border:2.5px solid #1f1a17;border-radius:99px;background:#fff;vertical-align:middle;overflow:visible;box-shadow:0 2px 0 #1f1a17}
+  .ev-beat u{position:absolute;top:0;bottom:0;background:#7be495}
+  .ev-beat i{position:absolute;top:-5px;bottom:-5px;width:5px;margin-left:-2.5px;background:#1f1a17;border-radius:3px;transition:left .12s}
+  .ev-beat-l{display:block;font:800 clamp(11px,1.1vw,14px)/1.2 Rubik,sans-serif;-webkit-text-stroke:0;color:#fff;text-shadow:0 1px 0 #1f1a17,0 -1px 0 #1f1a17,1px 0 0 #1f1a17,-1px 0 0 #1f1a17;text-transform:uppercase;letter-spacing:.05em}
+  .ev-ff{position:absolute;right:16px;bottom:calc(18px + var(--tb,0px));background:#1f1a17;color:#ffc93c;border-radius:99px;padding:7px 14px;font:800 15px/1 Rubik,sans-serif;box-shadow:0 3px 0 rgba(0,0,0,.35)}
   .ev-hidden{display:none !important}`;
 
 export function hudKit(ctx) {
@@ -93,9 +99,11 @@ export class Tags {
   }
   hide(key) { const it = this.items.get(key); if (it) it.d.style.display = 'none'; }
   clear() { for (const it of this.items.values()) it.d.remove(); this.items.clear(); }
-  place(key, x, y, z) {
+  // anchor 'bottom' puts the label above the point, 'center' centres it on the point
+  place(key, x, y, z, anchor = 'bottom') {
     const it = this.items.get(key);
     if (!it) return;
+    if (it.anchor !== anchor) { it.anchor = anchor; it.d.style.transform = anchor === 'center' ? 'translate(-50%,-50%)' : ''; }
     const cam = this.R.camera, el = this.R.renderer.domElement;
     this.v.set(x, y, z).project(cam);
     const off = this.v.z > 1 || Math.abs(this.v.x) > 1.1 || Math.abs(this.v.y) > 1.1;
@@ -170,6 +178,27 @@ export class RaceStart {
   }
   // a good reaction gets a burst off the start (0..1)
   boost(ru) { return ru.early ? 0 : clamp(1 - (ru.reaction - 0.12) / 0.38, 0, 1); }
+}
+
+// A little beat gauge for a rhythm: where your tapping speed sits against the event's sweet spot.
+// ratio = your cadence / the target cadence. Returns HTML for a tag.
+export function beatGauge(ratio, { lo = 0.9, hi = 1.18 } = {}) {
+  const map = (r) => clamp((r - 0.4) / 1.2, 0, 1) * 100;
+  const word = ratio < 0.15 ? 'tap left, right' : ratio < lo ? 'faster' : ratio > hi + 0.12 ? 'too fast' : ratio > hi ? 'a bit fast' : 'good beat';
+  const col = word === 'good beat' ? '#7be495' : word === 'a bit fast' ? '#ffc93c' : '#ff8a65';
+  return `<span class="ev-beat"><u style="left:${map(lo).toFixed(0)}%;width:${(map(hi) - map(lo)).toFixed(0)}%"></u><i style="left:${map(ratio).toFixed(0)}%"></i></span><span class="ev-beat-l" style="color:${col}">${word}</span>`;
+}
+
+// Fast-forward through a computer player's turn: a human taps action, the game runs five times as
+// fast until the next turn starts.
+export class Skipper {
+  constructor(ctx, kit) { this.ctx = ctx; this.on = false; this.badge = kit.mk('ev-ff ev-hidden', '⏩ fast-forward'); if (kit.touch) this.badge.style.setProperty('--tb', '110px'); }
+  get humans() { return this.ctx.competitors.some((c) => c.human); }
+  update(botTurn, pressed) {
+    if (!botTurn) { if (this.on) this.set(false); return; }
+    if (pressed && !this.on && this.humans) this.set(true);
+  }
+  set(on) { this.on = on; this.ctx.setSpeed(on ? 5 : 1); this.badge.classList.toggle('ev-hidden', !on); }
 }
 
 // seconds as 12.34 s

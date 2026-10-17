@@ -1,5 +1,5 @@
 // Diving: off a ruler springboard on top of a tower of books, into the goldfish bowl.
-// Tap ACTION as you land on the board to bounce higher (the third tap takes off), hold ACTION to tuck
+// Tap ACTION as you land on the board to bounce higher (three bounces, the third takes off), hold ACTION to tuck
 // and spin, let go to stretch out, and tap LEFT/RIGHT for half twists. Go in head first and straight:
 // the dial next to the diver turns green when stretching out now would do that. Five plush judges
 // score each dive; the middle three count, times the difficulty. Three dives each.
@@ -8,17 +8,24 @@ import { Figurine, POSES, REST, blendPose } from '../figurine.js';
 import { crowd, banner, floorMaterial } from '../props.js';
 import { Particles } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
-import { hudKit, Card, Guide, Tags } from './common.js';
+import { hudKit, Card, Guide, Tags, Skipper } from './common.js';
 
-const TOP = 45;                        // top of the book tower
+const TOP = 58;                        // top of the book tower
 const BOARD_X0 = -4, BOARD_LEN = 26;   // the ruler: from its pivot under the top book to its tip
 const TIP_X = BOARD_X0 + BOARD_LEN - 2;
-const BX = 44, BR = 16, BCY = 15;      // the bowl: centre x, radius, centre height
+const BX = 52, BR = 16, BCY = 15;      // the bowl: centre x, radius, centre height
 const WY = 23;                         // water level in the bowl
-const G = 30;
+const G = 26;                          // gravity in the slowed-down toy time of a dive
 const W_TUCK = 1.45 * TAU, W_OPEN = 0.3 * TAU, TWIST_RATE = 1.6;   // somersaults and twists per second
 const HOP_T = 0.56;                    // one bounce on the board
 const DIVES = 3;
+const BOUNCES = 3;                     // timed bounces on the board; the last one takes off
+// the dive called for each round (the last round is free)
+const CALLED = [
+  { name: 'Forward 1½ somersaults, tucked', short: '1½ tucked', som: 1.5, tw: 0 },
+  { name: 'Forward 1½ somersaults with a twist', short: '1½ with a twist', som: 1.5, tw: 1 },
+  { name: 'Your choice: go big!', short: 'your choice', som: null, tw: null },
+];
 const COM = 4.1;                       // centre of mass above the soles
 // computer divers: the somersaults they go for, timing spread on the board, error when opening out (s)
 const BOT = {
@@ -68,6 +75,7 @@ class Diving {
     this.card = new Card(kit);
     this.guide = new Guide(kit, []);
     this.tags = new Tags(kit, R);
+    this.skipper = new Skipper(this.ctx, kit);
     this.applyCamera(1);
   }
 
@@ -83,12 +91,12 @@ class Diving {
     wall.position.set(30, 130, -130); wall.receiveShadow = true; g.add(wall);
     // a low bookcase along the wall, full of books
     const wood = K.std({ color: 0xe9dcc4, roughness: 0.6 });
-    const bc = new THREE.Mesh(new K.RoundedBoxGeometry(200, 64, 26, 2, 1), wood);
-    bc.position.set(40, 32, -116); bc.castShadow = true; bc.receiveShadow = true; g.add(bc);
+    const bc = new THREE.Mesh(new K.RoundedBoxGeometry(200, 30, 26, 2, 1), wood);
+    bc.position.set(40, 15, -116); bc.castShadow = true; bc.receiveShadow = true; g.add(bc);
     const books = [], cols = [0xb5473a, 0x2f4f7a, 0x2fae5a, 0xf2c230, 0x8a55c9, 0xef7d2c, 0x3d7bd9, 0x6e4a2f];
-    for (const sy of [8, 38]) for (let x = -56; x < 136; x += 3.4 + (books.length % 3) * 0.6) {
+    for (const sy of [4]) for (let x = -56; x < 136; x += 3.4 + (books.length % 3) * 0.6) {
       const h = 17 + ((books.length * 7) % 6);
-      books.push({ x, y: sy + h / 2 - 4, z: -106, sx: 3, sy: h, sz: 18, rz: (books.length % 11 === 0) ? 0.18 : 0, color: cols[(books.length * 5) % cols.length] });
+      books.push({ x, y: sy + h / 2 - 4, z: -97, sx: 3, sy: h, sz: 18, rz: (books.length % 11 === 0) ? 0.18 : 0, color: cols[(books.length * 5) % cols.length] });
     }
     K.instances(new K.RoundedBoxGeometry(1, 1, 1, 1, 0.08), K.std({ roughness: 0.7 }), books, { colors: true });
     // a round rug under the bowl
@@ -102,7 +110,7 @@ class Diving {
     const g = K.group;
     // hardcover books stacked into a tower, a little skew
     const covers = [], pages = [], cols = [0xb5473a, 0x2f4f7a, 0x2fae5a, 0xf2c230, 0x8a55c9, 0xef7d2c, 0x3d7bd9, 0x9c6b3f, 0xe23b2e];
-    const n = 18, th = TOP / n;
+    const n = 23, th = TOP / n;
     for (let k = 0; k < n; k++) {
       const ry = (this.r() - 0.5) * 0.18, dx = (this.r() - 0.5) * 1.2, dz = (this.r() - 0.5) * 1.2;
       const w = 23 + this.r() * 4, d = 16 + this.r() * 3;
@@ -201,21 +209,22 @@ class Diving {
       if (this.round < DIVES) { this.round++; this.turn = 0; this.ctx.hud.message(this.round === DIVES ? 'Last dive!' : `Dive ${this.round}`, 'small', '#ffc93c', 1.4); } else { this.finishAll(); return; }
     }
     const d = this.cur = this.divers[this.turn];
-    this.dv = { hop: -1, hops: 0, amp: 0.25, hopT: 0, q: [], x: TIP_X - 1.5, y: TOP + 0.5, theta: 0, twist: 0, twistGoal: 0, tucked: false, wasTucked: false, flightT: 0 };
+    this.called = CALLED[this.round - 1];
+    this.dv = { hop: -1, hops: 0, amp: 0.25, hopT: 0, q: [], x: TIP_X - 1.5, y: TOP + 0.5, theta: 0, twist: 0, twistGoal: 0, tucked: false, wasTucked: false, flightT: 0, last: null };
+    if (!d.bot) this.skipper.update(false, false);
     this.phase = 'ready'; this.t = 0;
     this.placeWaiting();
     d.fig.setExpression('focus');
     if (d.bot) this.planBot(d);
     this.ctx.competitors.forEach((c, i) => this.ctx.hud.chip(i, this.divers[i].scores.length ? `${this.divers[i].total.toFixed(1)}` : '', i === d.i ? 'active' : ''));
-    if (d.c.human) this.ctx.hud.message(`${d.c.short}: tap ${d.c.type === 'touch' ? '●' : 'action'} to bounce`, 'small', '#fff');
-    else this.ctx.hud.message('');
+    this.ctx.hud.message(`${d.c.short}: ${this.called.name}`, 'small', '#fff', 2.2);
     this.updateCard();
   }
 
   planBot(d) {
     const B = BOT[this.ctx.skillName] || BOT.normal, r = d.bot.r;
-    d.bot.som = B.som[Math.floor(r() * B.som.length)];
-    d.bot.twists = r() < B.twist ? (r() < 0.5 ? 1 : 2) : 0;
+    d.bot.som = this.called.som ?? B.som[Math.floor(r() * B.som.length)];
+    d.bot.twists = this.called.tw ?? (r() < B.twist ? (r() < 0.5 ? 1 : 2) : 0);
     d.bot.wait = 0.8 + r() * 0.6;
     d.bot.pressed = 0;
   }
@@ -238,11 +247,14 @@ class Diving {
       if (x === d) q = e;
       if (x.c.human && e.some((y) => y.b === 'action' && y.down)) skip = true;
     }
+    // watching a computer diver: action fast-forwards
+    this.skipper.update(!!d.bot, skip);
     if (this.phase === 'ready' || this.phase === 'bounce') {
       for (const e of q) if (e.down && e.b === 'action') this.hopPress(e.t);
+      if (v.last) v.last.t += dt;
       if (this.phase === 'bounce') {
         v.hopT += dt;
-        if (v.hopT >= HOP_T * (0.7 + 0.3 * v.amp)) { v.hopT = 0; v.hops++; ctx.sound.thump(0.25 + v.amp * 0.3); if (v.hops > 6) this.takeoff(0.2); }
+        if (v.hopT >= HOP_T * (0.7 + 0.3 * v.amp)) { v.hopT = 0; v.hops++; ctx.sound.thump(0.25 + v.amp * 0.3); if (v.hops > 8) this.takeoff(0.2); }
       }
       if (this.phase === 'ready' && this.t > 12) this.hopPress(now);
     } else if (this.phase === 'flight') {
@@ -305,14 +317,17 @@ class Diving {
     const u = v.hopT / len;
     const q = clamp(1 - Math.min(u, 1 - u) / 0.22, 0, 1);
     v.q.push(q);
-    v.amp = clamp(v.amp + 0.15 + 0.3 * q, 0, 1);
-    if (this.cur.c.human) ctx.hud.flash(q > 0.75 ? 'Great bounce!' : q > 0.4 ? 'Good' : 'Off the beat', q > 0.75 ? '#7be495' : q > 0.4 ? '#ffffff' : '#ff8a65');
-    if (v.q.length >= 2) this.takeoff(q);
+    v.amp = clamp(v.amp + 0.1 + 0.2 * q, 0, 1);
+    // how it went, shown next to the board: great, or early (before the feet land) / late (after)
+    v.last = { q, word: q > 0.75 ? 'great!' : q > 0.4 ? (u > 0.5 ? 'a bit early' : 'a bit late') : (u > 0.5 ? 'early' : 'late'), t: 0 };
+    ctx.sound.pop();
+    if (v.q.length >= BOUNCES) this.takeoff(q);
   }
 
   takeoff(q) {
     const v = this.dv, ctx = this.ctx;
-    v.vy = 11 + 12 * v.amp * (0.55 + 0.45 * q);
+    const avg = v.q.length ? v.q.reduce((a, b) => a + b, 0) / v.q.length : 0.2;
+    v.vy = 10 + 13 * v.amp * (0.5 + 0.5 * avg) * (0.7 + 0.3 * q);
     v.y = TOP + 1.2; v.x = TIP_X;
     const T = this.timeToWater(v);
     v.vx = (BX - v.x) / T;
@@ -335,7 +350,9 @@ class Diving {
     exe = clamp(exe, 0, 10);
     const twists = Math.floor(v.twist * 2 + 1e-6) / 2;
     const dd = feet ? 1.0 : Math.round((1.2 + 0.45 * (som - 0.5) + 0.35 * twists) * 10) / 10;
-    v.result = { err, som: feet ? som - 0.5 : som, twists, exe, dd, cannon, feet };
+    const c = this.called;
+    const wrong = c.som != null && (feet || som !== c.som || twists !== c.tw);
+    v.result = { err, som: feet ? som - 0.5 : som, twists, exe, dd, cannon, feet, wrong };
     v.vy = -10;
     this.phase = 'entry'; this.t = 0;
     const big = cannon ? 3 : clamp(err / 0.6, 0.15, 2.5);
@@ -352,13 +369,15 @@ class Diving {
     const marks = this.judgeSpots.map(() => clamp(Math.round((res.exe + this.r.gauss() * 0.45) * 2) / 2, 0, 10));
     const sorted = [...marks].sort((a, b) => a - b);
     const mid = sorted[1] + sorted[2] + sorted[3];
-    const pts = Math.round(mid * res.dd * 10) / 10;
+    // not the dive that was called: the judges halve it
+    const pts = Math.round(mid * res.dd * (res.wrong ? 0.5 : 1) * 10) / 10;
     d.scores.push(pts); d.total = Math.round((d.total + pts) * 10) / 10;
     d.last = { ...res, marks, pts };
     this.judgeSpots.forEach((s, k) => this.tags.set('j' + k, `<span class="pill" style="--tc:${marks[k] >= 8 ? '#7be495' : marks[k] >= 5 ? '#fff1d6' : '#ff8a65'};font-size:15px">${marks[k].toFixed(1)}</span>`));
     const what = res.feet ? 'feet first' : `${fmtSom(res.som)} somersault${res.som > 1 ? 's' : ''}${res.twists ? `, ${fmtSom(res.twists)} twist${res.twists > 1 ? 's' : ''}` : ''}`;
     ctx.hud.message(`${pts.toFixed(1)} pts`, '', pts >= 60 ? '#ffc93c' : '#fff');
     ctx.hud.flash(`${what} · difficulty ${res.dd.toFixed(1)}`, '#ffffff');
+    if (res.wrong) ctx.hud.flash(`Not the dive called (${this.called.short}): half points`, '#ff8a65');
     ctx.sound.cheer(clamp(res.exe / 10, 0.2, 1.1)); if (res.exe > 7) ctx.sound.clap(6);
     d.fig.setExpression(res.exe > 7.5 ? 'wow' : res.exe > 5 ? 'happy' : 'sad');
     ctx.hud.chip(d.i, `${d.total.toFixed(1)}`, 'active');
@@ -389,7 +408,8 @@ class Diving {
 
   updateCard() {
     const d = this.cur;
-    const line = d ? `Dive ${this.round} of ${DIVES} · ${d.scores.map((s) => s.toFixed(1)).join(' · ') || 'first dive'}` : 'Final scores';
+    const humans = this.divers.some((x) => x.c.human);
+    const line = d ? `Dive ${this.round} of ${DIVES}: ${this.called.short}${d.bot && humans ? ' · action: fast-forward' : ''}` : 'Final scores';
     const ranked = [...this.divers].filter((x) => x.scores.length).sort((a, b) => b.total - a.total);
     this.card.set(d ? d.c : null, line, ranked.map((x) => ({ c: x.c, text: x.total.toFixed(1), me: x === d })));
   }
@@ -472,20 +492,33 @@ class Diving {
     this.guide.show(!!show);
     if (show) {
       const touch = d.c.type === 'touch', a = touch ? '●' : 'action';
-      this.guide.tip(ph !== 'flight' ? `tap ${a} as your feet touch the board: the 2nd tap takes off`
-        : `hold ${a} to tuck and spin · let go when the dial is green · ${touch ? '◀ ▶' : 'left/right'} twist`);
+      this.guide.tip(ph === 'ready' ? `${this.called.name} · tap ${a} to start bouncing`
+        : ph === 'bounce' ? `tap ${a} as the ring closes (feet on the board): ${BOUNCES} bounces, the last one takes off`
+          : `hold ${a} to tuck and spin · let go when the dial is green${this.called.tw ? ` · then tap ${touch ? '◀ ▶' : 'left/right'} twice to twist` : ` · ${touch ? '◀ ▶' : 'left/right'}: twist`}`);
     }
+    // the bounce ring: it closes on the green circle as the feet meet the board
+    if (d && v && d.c.human && (ph === 'bounce' || (ph === 'ready' && this.t > 0.2))) {
+      const len = HOP_T * (0.7 + 0.3 * v.amp), u = ph === 'bounce' ? v.hopT / len : 1;
+      const rr = 15 + 44 * (1 - u);
+      const last = v.last && v.last.t < 0.7 ? `<span class="pill" style="--tc:${v.last.q > 0.75 ? '#7be495' : v.last.q > 0.4 ? '#fff1d6' : '#ff8a65'}">${v.last.word}</span>` : `<span class="pill" style="--tc:#fff1d6">bounce ${Math.min(BOUNCES, v.q.length + (ph === 'bounce' ? 1 : 0))} of ${BOUNCES}</span>`;
+      const svg = `<svg width="130" height="130" viewBox="-65 -65 130 130"><circle r="15" fill="rgba(123,228,149,.35)" stroke="#2fae5a" stroke-width="4"/><circle r="${rr.toFixed(1)}" fill="none" stroke="#1f1a17" stroke-width="4" stroke-dasharray="${ph === 'ready' ? '6 5' : 'none'}"/></svg>`;
+      this.tags.set('ring', `${svg}<br>${last}`);
+      this.tags.place('ring', v.x, TOP + 0.5, 0, 'center');
+    } else this.tags.hide('ring');
+
     // the dial beside the diver: where the spin ends up if you stretch out now
     if (d && v && ph === 'flight') {
       const T = Math.max(0, this.timeToWater(v));
       const end = v.theta + W_OPEN * T;
       const err = Math.abs(wrapPi(end - Math.PI));
-      const good = err < 0.45 && !v.tucked;
+      const target = this.called.som;
+      const endSom = Math.max(0, Math.round((end - Math.PI) / TAU)) + 0.5;
+      const good = err < 0.45 && !v.tucked && (target == null || endSom === target);
       const ang = (end * 180) / Math.PI;
       const svg = `<svg width="58" height="58" viewBox="-29 -29 58 58"><circle r="25" fill="rgba(255,244,220,.92)" stroke="#1f1a17" stroke-width="3"/><path d="M0 0 L${(Math.sin(0.45) * 24).toFixed(1)} ${(Math.cos(0.45) * 24).toFixed(1)} A24 24 0 0 1 ${(-Math.sin(0.45) * 24).toFixed(1)} ${(Math.cos(0.45) * 24).toFixed(1)} Z" fill="#7be495"/><g transform="rotate(${ang.toFixed(0)})"><line x1="0" y1="6" x2="0" y2="-19" stroke="${good ? '#2fae5a' : '#e23b2e'}" stroke-width="4" stroke-linecap="round"/><circle cy="-19" r="4.5" fill="${good ? '#2fae5a' : '#e23b2e'}"/></g></svg>`;
       const som = Math.max(0, v.theta / TAU);
-      this.tags.set('dial', `${svg}<br><span class="pill" style="--tc:${good ? '#7be495' : '#fff1d6'}">${fmtSom(Math.floor(som * 2) / 2)} ↻</span>`);
-      this.tags.place('dial', v.x - 11, v.y + 6, 0);
+      this.tags.set('dial', `${svg}<br><span class="pill" style="--tc:${good ? '#7be495' : '#fff1d6'}">${fmtSom(Math.floor(som * 2) / 2)}${target != null ? ` of ${fmtSom(target)}` : ''} ↻</span>`);
+      this.tags.place('dial', v.x - 13, v.y + 1, 0, 'center');
     } else this.tags.hide('dial');
     if (ph === 'scores') this.judgeSpots.forEach((s, k) => this.tags.place('j' + k, s.x, s.y + 16, s.z));
   }
@@ -493,11 +526,11 @@ class Diving {
   applyCamera(dt) {
     const R = this.ctx.R, c = this.cam, ph = this.phase, v = this.dv;
     let want;
-    if (ph === 'flight' && v) want = { x: (v.x + BX) / 2 + 2, y: (v.y + WY) / 2, z: 0, yaw: 0.08, pitch: 0.22, width: 82 };
+    if (ph === 'flight' && v) want = { x: v.x + (BX - v.x) * 0.35, y: v.y + (WY - v.y) * 0.3, z: 0, yaw: 0.1, pitch: 0.2, width: 72 };
     else if (ph === 'entry') want = { x: BX, y: WY + 2, z: 0, yaw: 0.1, pitch: 0.28, width: 60 };
     else if (ph === 'scores') want = { x: BX + 30, y: 16, z: -6, yaw: -0.15, pitch: 0.3, width: 128 };
     else if (ph === 'done') want = { x: 10, y: 14, z: 0, yaw: 0.25, pitch: 0.25, width: 130 };
-    else want = { x: TIP_X, y: TOP + 2, z: 0, yaw: 0.25, pitch: 0.26, width: 62 };
+    else want = { x: TIP_X - 1, y: TOP + 3, z: 0, yaw: 0.3, pitch: 0.24, width: 52 };
     const rate = ph === 'flight' ? 4 : 2.6;
     for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], rate, Math.min(dt, 0.1));
     R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: Math.max(150, c.width * 1.6) });
@@ -516,9 +549,9 @@ export default {
   venue: 'A tower of picture books with a ruler for a springboard, the goldfish bowl below and five plush judges.',
   loading: 'Filling the fishbowl…',
   how: [
-    { verb: 'Timing', text: 'Tap <b>action</b> to start bouncing, then tap as your feet touch the board: the second tap takes off, higher if it was on time.' },
+    { verb: 'Timing', text: 'Tap <b>action</b> to start bouncing, then tap as the ring closes and your feet touch the board. Three bounces: the third takes off, higher if they were on time.' },
     { verb: 'Power', text: '<b>Hold action</b> to tuck and spin, let go to stretch out. The dial next to you turns <b>green</b> when stretching out now gets you in head first.' },
-    { verb: 'Steer', text: 'Stretched out, tap <b>left</b> or <b>right</b> for half twists. More somersaults and twists score more, if the entry is clean. Three dives.' },
+    { verb: 'Steer', text: 'Stretched out, tap <b>left</b> or <b>right</b> for half twists. Dive 1 is 1½ somersaults, dive 2 adds a twist, dive 3 is your choice: a different dive from the one called scores half.' },
   ],
   better: 'higher',
   resultsDelay: 0.6,

@@ -7,7 +7,7 @@ import { crowd, banner } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
-import { hudKit, Guide, Tags, RaceStart, fmtTime } from './common.js';
+import { hudKit, Guide, Tags, RaceStart, fmtTime, beatGauge, ORD } from './common.js';
 
 const L = 150, W = 50, T = 5;          // the tub inside: length, width; wall thickness
 const RIM = 40, WY = 33, FLOOR = 8;      // rim top, water surface, tub floor
@@ -80,7 +80,7 @@ class Swimming {
     this.guide = new Guide(kit, []);
     this.tags = new Tags(kit, R);
     const st = document.createElement('style');
-    st.textContent = '.sw-air{display:inline-block;width:46px;height:8px;border:2px solid #1f1a17;border-radius:99px;background:#fff;overflow:hidden;vertical-align:middle;margin-left:4px}.sw-air i{display:block;height:100%;background:#4fb3e8}.sw-air.low i{background:#e23b2e}';
+    st.textContent = '.sw-air{display:inline-block;width:clamp(56px,5.5vw,76px);height:12px;border:2.5px solid #1f1a17;border-radius:99px;background:#fff;overflow:hidden;vertical-align:middle;margin-left:6px;box-shadow:0 2px 0 #1f1a17}.sw-row{display:flex;align-items:center;justify-content:center;gap:6px;font:800 clamp(11px,1.1vw,14px)/1 Rubik,sans-serif;-webkit-text-stroke:0;text-shadow:0 1px 0 #1f1a17,0 -1px 0 #1f1a17,1px 0 0 #1f1a17,-1px 0 0 #1f1a17;text-transform:uppercase}.sw-air i{display:block;height:100%;background:#4fb3e8}.sw-air.low i{background:#e23b2e}';
     kit.el.appendChild(st);
     this.applyCamera(1);
   }
@@ -253,6 +253,7 @@ class Swimming {
 
   step(s, evs, dt, now) {
     const ctx = this.ctx;
+    if (s.flashT > 0) s.flashT -= dt;
     if (s.finished) { s.v *= Math.exp(-2 * dt); return; }
     if (s.dive) {
       s.dive.u += dt / 0.55;
@@ -309,16 +310,19 @@ class Swimming {
     if (tr.u >= 1) {
       s.turn = null; s.lap = 1; s.air = Math.max(s.air, tr.tumble ? 0.75 : 1);
       s.v = VMAX * (tr.tumble ? 1.12 : 0.45); s.glide = tr.tumble ? 0.45 : 0.15;
-      if (tr.tumble && s.c.human) this.ctx.hud.flash('Tumble turn!', '#7be495');
+      if (s.c.human) this.tagFlash(s, tr.tumble ? 'tumble turn!' : 'slow touch turn', tr.tumble ? '#7be495' : '#ff8a65');
     }
   }
 
   breathe(s) {
     if (s.breathT >= 0 || s.gaspT > 0) return;
     s.breathT = 0;
+    const was = s.air;
     s.air = Math.min(1, s.air + 0.65);
-    if (s.c.human) this.ctx.sound.puff(0.25);
+    if (s.c.human) { this.ctx.sound.puff(0.25); this.tagFlash(s, was < 0.35 ? 'good breath' : 'breath', was < 0.35 ? '#7be495' : '#fff1d6'); }
   }
+
+  tagFlash(s, text, col) { s.flash = text; s.flashC = col; s.flashT = 0.8; }
 
   touchFinish(s, t) {
     s.x = 0; s.finished = true;
@@ -410,8 +414,12 @@ class Swimming {
       if (s.turn.tumble) { pose = { ...STREAM, pitch: Math.PI / 2 + (u < 0.5 ? u * 2 * Math.PI : 0), shL: 0.4, shR: 0.4, hipL: 1.6 * Math.sin(Math.min(u, 0.5) * 2 * Math.PI), hipR: 1.6 * Math.sin(Math.min(u, 0.5) * 2 * Math.PI), kneeL: 2.0 * Math.sin(Math.min(u, 0.5) * 2 * Math.PI), kneeR: 2.0 * Math.sin(Math.min(u, 0.5) * 2 * Math.PI) }; y = WY - 2.5 * Math.sin(u * Math.PI) - 0.9; }
       else { pose = u < 0.5 ? { ...crawl(0.25, 0.3, 1), pitch: 0.9, shR: 2.4, elR: 0.6 } : { ...STREAM, pitch: Math.PI / 2 }; y = u < 0.5 ? WY - 4 : WY - 1.6; }
     } else if (s.finished) {
-      pose = { ...REST, pitch: 0.25, y: 0, shL: s.place === 0 ? 2.8 : 0.4, shR: 2.6 + 0.2 * Math.sin(tt * 7), abL: 0.4, abR: 0.4, elR: 0.3, hipL: 0.4, hipR: 0.2, kneeL: 0.6, kneeR: 0.5 };
-      y = WY - 7.2;
+      // standing up in the water at the wall, chest out, waving (the winner with both arms)
+      pose = { ...REST, y: 0, shL: s.place === 0 ? 2.8 + 0.2 * Math.sin(tt * 7) : 0.5, shR: 2.6 + 0.25 * Math.sin(tt * 7 + 1), abL: 0.45, abR: 0.45, elL: 0.3, elR: 0.3, head: -0.15 };
+      root.position.set(4.5, WY - 4.6 + 0.25 * Math.sin(tt * 2.2 + s.i), s.z);
+      root.rotation.set(0, 0.35, 0);
+      fig.setPose(pose);
+      return;
     } else {
       const breath = s.breathT >= 0 ? Math.sin(clamp(s.breathT / BREATH_T, 0, 1) * Math.PI) : 0;
       pose = s.gaspT > 0 ? { ...crawl(s.anim, 0.2, 0.6), pitch: 1.0, head: -0.6 } : s.glide > 0 && s.lap === 1 && s.v > VMAX ? STREAM : crawl(s.anim, sp, breath);
@@ -438,23 +446,33 @@ class Swimming {
         : h.lap === 0 && h.x > TURN_ZONE[0] - 30 ? `tap ${a} over the green tiles: tumble turn!`
           : `tap ${lr} in turn to swim · ${a} to breathe`);
     }
+    // over each human swimmer: name, the stroke beat, the air left, and what to do next
     for (const s of this.swimmers) {
       const key = 's' + s.i;
       if (!s.c.human || ph === 'done' || ph === 'pre') { this.tags.hide(key); continue; }
-      if (s.finished) { this.tags.set(key, `${fmtTime(s.time)}`); this.tags.place(key, s.x + 3, WY + 6, s.z); continue; }
+      if (s.finished) { this.tags.set(key, `<span class="pill big" style="--tc:${s.place === 0 ? '#ffc93c' : '#fff1d6'}">${ORD[s.place]} · ${fmtTime(s.time)}</span>`); this.tags.place(key, 4.5, WY + 7, s.z); continue; }
       const low = s.air < 0.3;
+      const blink = Math.sin(tt * 12) > 0;
+      const ahead = s.lap === 0 && s.dir > 0 && !s.turn && s.x > TURN_ZONE[0] - 22 && s.x < TURN_ZONE[0];
       const zone = s.lap === 0 && s.dir > 0 && s.x >= TURN_ZONE[0] && s.x <= TURN_ZONE[1] && !s.armed && !s.turn;
-      const pill = zone ? '<span class="pill" style="--tc:#7be495">turn!</span><br>' : low && s.swimming ? `<span class="pill" style="--tc:${Math.sin(tt * 12) > 0 ? '#ff8a65' : '#ffc93c'}">breathe!</span><br>` : '';
-      this.tags.set(key, `${pill}${s.c.short}<span class="sw-air${low ? ' low' : ''}"><i style="width:${(s.air * 100).toFixed(0)}%"></i></span>`);
+      let pill = '';
+      if (s.flashT > 0) pill = `<span class="pill" style="--tc:${s.flashC}">${s.flash}</span><br>`;
+      else if (zone) pill = `<span class="pill big" style="--tc:${blink ? '#7be495' : '#fff1d6'}">tap now: turn!</span><br>`;
+      else if (s.armed) pill = '<span class="pill" style="--tc:#7be495">tumble turn ready</span><br>';
+      else if (ahead) pill = '<span class="pill" style="--tc:#fff1d6">green tiles ahead</span><br>';
+      else if (s.gaspT > 0) pill = '<span class="pill" style="--tc:#ff8a65">out of air!</span><br>';
+      else if (low && s.swimming) pill = `<span class="pill big" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">breathe!</span><br>`;
+      const beat = s.swimming && !s.turn ? beatGauge(s.rhythm.cadence(this.ctx.time()) / TARGET) : '';
+      this.tags.set(key, `${pill}${s.c.short}<div class="sw-row">air<span class="sw-air${low ? ' low' : ''}"><i style="width:${(s.air * 100).toFixed(0)}%"></i></span></div>${beat}`);
       const hx = s.swimming || s.dive ? s.x : -2.2;
-      this.tags.place(key, hx, (s.swimming ? WY : this.blockY + 9) + 5, s.z);
+      this.tags.place(key, hx, (s.swimming ? WY : this.blockY + 9) + 6, s.z);
     }
   }
 
   applyCamera(dt) {
     const R = this.ctx.R, c = this.cam, ph = this.phase;
     let want;
-    if (ph === 'pre' || ph === 'marks') want = { x: 22, y: WY, z: 2, yaw: 0.35, pitch: 0.42, width: 92 };
+    if (ph === 'pre' || ph === 'marks') want = { x: 16, y: WY + 2, z: 2, yaw: 0.45, pitch: 0.36, width: 78 };
     else {
       // follow the human swimmers (or the leader), keeping everyone close by in view
       const humans = this.swimmers.filter((s) => s.c.human && !s.finished);
@@ -463,8 +481,11 @@ class Swimming {
       for (const s of focus) { const x = s.started ? s.x : 0; lo = Math.min(lo, x); hi = Math.max(hi, x); }
       if (this.lead && Math.abs(this.lead.x - (lo + hi) / 2) < 50) { lo = Math.min(lo, this.lead.x); hi = Math.max(hi, this.lead.x); }
       const mid = (lo + hi) / 2;
-      want = { x: clamp(mid, 20, L - 20), y: WY, z: 2, yaw: 0.06, pitch: ph === 'done' ? 0.6 : 0.92, width: clamp(hi - lo + 70, 90, 175) };
-      if (ph === 'done') Object.assign(want, { x: 14, width: 96, yaw: 0.3 });
+      let zc = 0;
+      for (const s of focus) zc += s.z;
+      zc /= focus.length;
+      want = { x: clamp(mid + 4, 26, L - 26), y: WY, z: zc * 0.75 + 2, yaw: 0.08, pitch: 0.78, width: clamp(hi - lo + 46, 66, 160) };
+      if (ph === 'done') Object.assign(want, { x: 22, z: 4, width: 82, yaw: 0.45, pitch: 0.42 });
     }
     for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], 2.6, Math.min(dt, 0.1));
     R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: Math.max(170, c.width * 1.6) });
@@ -484,7 +505,7 @@ export default {
   loading: 'Running the bath…',
   how: [
     { verb: 'Timing', text: 'On the soap bar, <b>hold action</b>. Let go on the whistle. Too early and you wait.' },
-    { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn for the arm strokes: a steady beat is fastest.' },
+    { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn for the arm strokes. Keep the beat needle over your swimmer in the green: steady beats fast.' },
     { verb: 'Timing', text: 'Tap <b>action</b> to breathe before your air runs out. Over the <b>green tiles</b> at the far end, tap <b>action</b> for a tumble turn.' },
   ],
   better: 'lower',

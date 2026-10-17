@@ -9,7 +9,7 @@ import { crowd, banner } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles, SkidMarks } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
-import { hudKit, Guide, Tags, RaceStart, fmtTime } from './common.js';
+import { hudKit, Guide, Tags, RaceStart, fmtTime, beatGauge, ORD } from './common.js';
 
 const SX = 36;                 // half the length of a straight
 const R0 = 20, LANE = 4.2;     // inner radius of the bends, lane width
@@ -347,21 +347,22 @@ class SpeedSkating {
       const touch = humans.every((s) => s.c.type === 'touch');
       const act = touch ? '●' : 'action', lr = touch ? '◀ ▶' : 'left, right';
       const h = live || humans[0];
-      this.guide.tip(ph === 'marks' ? `hold ${act}, let go on the whistle` : `tap ${lr} in long strokes · ${act} at the sweets: lean in, ${act} after the bend: stand up`);
+      this.guide.tip(ph === 'marks' ? `hold ${act}, let go on the whistle` : `${lr}: keep the beat needle in the green · ${act} at the sweets to lean in, again after the bend`);
       const e = clamp(h.v / VMAX, 0, 1);
       this.guide.bar('sp', e, { go: e > 0.9, hide: ph === 'marks' });
     }
     for (const s of this.skaters) {
       const key = 'k' + s.i;
       if (!s.c.human || ph === 'done' || ph === 'pre' || !s.started) { this.tags.hide(key); continue; }
-      if (s.finished) { this.tags.set(key, fmtTime(s.time)); } else {
-        const bendNow = this.at(s).bend > 0, soon = this.bendAhead(s, 14) > 0;
+      if (s.finished) { this.tags.set(key, `<span class="pill big" style="--tc:${s.place === 0 ? '#ffc93c' : '#fff1d6'}">${ORD[s.place]} · ${fmtTime(s.time)}</span>`); } else {
+        const bendNow = this.at(s).bend > 0, soon = this.bendAhead(s, 16) > 0;
         const blink = Math.sin(tt * 12) > 0;
-        const pill = bendNow && !s.lean ? `<span class="pill" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">lean in!</span><br>`
-          : !bendNow && s.lean && !soon ? `<span class="pill" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">stand up!</span><br>`
+        const pill = bendNow && !s.lean ? `<span class="pill big" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">lean in! (${this.ctx.competitors[s.i].type === 'touch' ? '●' : 'action'})</span><br>`
+          : !bendNow && s.lean && !soon ? `<span class="pill big" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">stand up! (${this.ctx.competitors[s.i].type === 'touch' ? '●' : 'action'})</span><br>`
             : soon && !s.lean ? '<span class="pill" style="--tc:#fff1d6">bend ahead</span><br>'
-              : s.lean ? '<span class="pill" style="--tc:#7be495">leaning</span><br>' : '';
-        this.tags.set(key, `${pill}${s.c.short}`);
+              : s.lean ? '<span class="pill" style="--tc:#7be495">leaning in</span><br>' : '';
+        const lap = s.p >= LAP ? 'last lap' : 'lap 1';
+        this.tags.set(key, `${pill}${s.c.short} <span style="font-size:.7em">${lap}</span><br>${beatGauge(s.rhythm.cadence(this.ctx.time()) / TARGET, { lo: 0.9, hi: 1.2 })}`);
       }
       const pt = this.at(s);
       this.tags.place(key, pt.x, Y + 11, pt.z);
@@ -373,10 +374,18 @@ class SpeedSkating {
     let want;
     const humans = this.skaters.filter((s) => s.c.human && !s.finished && s.started);
     if (ph === 'race' && humans.length) {
-      let x = 0, z = 0;
-      for (const s of humans) { const p = this.at(s); x += p.x; z += p.z; }
+      // from just outside the track, beside the human skaters, turning with them round the bends
+      let x = 0, z = 0, lo = Infinity, hi = -Infinity;
+      for (const s of humans) { const p = this.at(s); x += p.x; z += p.z; lo = Math.min(lo, s.p); hi = Math.max(hi, s.p); }
       x /= humans.length; z /= humans.length;
-      want = { x: x * 0.55, y: Y, z: z * 0.4 + 6, yaw: 0, pitch: 0.82, width: 140 };
+      if (hi - lo > 90) want = { x: 0, y: Y, z: 8, yaw: 0, pitch: 0.82, width: 170 };
+      else {
+        const cx = clamp(x, -SX, SX);
+        let yaw = Math.atan2(x - cx, z);
+        while (yaw - c.yaw > Math.PI) yaw -= 2 * Math.PI;
+        while (yaw - c.yaw < -Math.PI) yaw += 2 * Math.PI;
+        want = { x, y: Y + 2, z, yaw, pitch: 0.62, width: 82 + (hi - lo) * 0.8 };
+      }
     } else if (ph === 'pre' || ph === 'marks') want = { x: -SX + 6, y: Y + 2, z: R0 + 8, yaw: -0.25, pitch: 0.4, width: 80 };
     else want = { x: 0, y: Y, z: 8, yaw: 0, pitch: 0.82, width: 170 };
     for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], 2.2, Math.min(dt, 0.1));
