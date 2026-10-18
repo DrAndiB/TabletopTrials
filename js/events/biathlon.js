@@ -8,11 +8,12 @@
 // penalty loop.
 import * as THREE from '../../vendor/three.bundle.js';
 import { Figurine, POSES, blendPose, REST } from '../figurine.js';
-import { crowd, banner } from '../props.js';
+import { banner } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles } from '../fx.js';
 import { fitRhythm, winFor, helped, sizeOf } from '../sizes.js';
 import { clamp, damp, rng, makeNoise2D } from '../util.js';
+import { paneWindow, nightSky, penguinCrowd, Fireplace } from '../venues.js';
 
 // ---------- the course ----------
 // a rounded rectangle round the coffee table; +x along the front (the stadium), clockwise from above
@@ -106,10 +107,11 @@ class Biathlon {
   // ---------------------------------------------------------------- venue
   async build() {
     const { kit: K, R, competitors } = this.ctx;
+    // a winter evening by the fire: the fire lights the room warm, the ceiling light keeps it readable
     R.setLighting({
-      sunDir: [-0.4, 1, 0.5], sunColor: 0xfff1e0, sunIntensity: 2.0,
-      hemiSky: 0xe6eefc, hemiGround: 0x5c4f45, hemiIntensity: 0.62,
-      envIntensity: 0.45, exposure: 0.92, background: 0x1c2130, shadowRadius: 4,
+      sunDir: [-0.3, 1, 0.45], sunColor: 0xffe6c4, sunIntensity: 1.45,
+      hemiSky: 0x8a9ac8, hemiGround: 0x3a2a20, hemiIntensity: 0.5,
+      envIntensity: 0.35, exposure: 0.98, background: 0x12141c, shadowRadius: 4,
     });
     this.noise = makeNoise2D(91);
     this.buildRoom(K);
@@ -159,8 +161,14 @@ class Biathlon {
     rg.putImageData(img, 0, 0);
     const rug = new THREE.Mesh(new K.RoundedBoxGeometry(400, 1, 250, 2, 0.4), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(rc, { repeat: [6, 4] }), roughness: 1 }));
     rug.position.set(0, 0.5, 0); rug.receiveShadow = true; g.add(rug);
-    const wall = new THREE.Mesh(new THREE.PlaneGeometry(1000, 300), K.std({ color: 0xbcc9d8, roughness: 0.95 }));
-    wall.position.set(0, 150, -200); g.add(wall);
+    // a deep red wall, the fireplace in the middle of it, a window on the snowy night
+    const wc = K.TX.makeCanvas(256), w2 = wc.getContext('2d');
+    w2.fillStyle = '#8a3b33'; w2.fillRect(0, 0, 256, 256);
+    w2.fillStyle = 'rgba(255,220,180,0.08)'; for (let y = 0; y < 256; y += 64) for (let x = 0; x < 256; x += 64) { w2.beginPath(); w2.moveTo(x + 32, y + 8); w2.lineTo(x + 48, y + 32); w2.lineTo(x + 32, y + 56); w2.lineTo(x + 16, y + 32); w2.fill(); }
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(1000, 300), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(wc, { repeat: [16, 5] }), roughness: 0.95 }));
+    wall.position.set(0, 150, -200); wall.receiveShadow = true; g.add(wall);
+    this.fire = new Fireplace(g, { x: 30, z: -200, w: 110, h: 86, light: 22000 });
+    this.win = paneWindow(g, { x: -170, y: 110, z: -199.6, w: 90, h: 80, sky: nightSky(21), frame: 0xf2efe8, snow: K.quality.grass > 0.5 ? 60 : 0, depth: 3.4 });
     // the coffee table in the middle, plush fans on top
     const wood = new THREE.MeshPhysicalMaterial({ color: 0x8a5a36, roughness: 0.35, clearcoat: 0.6 });
     const top = new THREE.Mesh(new K.RoundedBoxGeometry(112, 4, 40, 3, 1.4), wood);
@@ -295,7 +303,8 @@ class Biathlon {
     for (let k = 0; k < 6; k++) spots.push({ x: T.x - 44 + k * 17, y: T.y, z: T.z - 6 + (k % 2) * 12, ry: (k % 2) ? 0.3 : -0.3, size: 10 });
     for (let k = 0; k < 5; k++) spots.push({ x: -100 + k * 40, y: 1, z: -HZ - 34 - (k % 2) * 6, ry: 0.2 * (k % 2 ? 1 : -1), size: 12 });
     for (let k = 0; k < 3; k++) spots.push({ x: 196, y: 1, z: -30 + k * 28, ry: -1.3, size: 12 });
-    this.crowd = crowd(K.group, spots, 33);
+    // the crowd: penguins, some in bobble hats
+    this.crowd = penguinCrowd(K.group, spots, 33);
     [[110, -112], [-150, 100], [-200, -10], [10, -HZ - 44]].forEach(([x, z], k) => {
       const b = banner(competitors[k % competitors.length].code, 15, { seed: 80 + k });
       b.position.set(x, 0, z); b.rotation.y = (this.r() - 0.5) * 0.4;
@@ -671,6 +680,16 @@ class Biathlon {
     // hit caps flip over with a little hop
     if (!paused) for (const row of this.targets) for (const t of row) if (t.flip >= 0 && t.flip < 1) { t.flip = Math.min(1, t.flip + dt / 0.3); t.cap.rotation.x = Math.PI * t.flip; t.cap.position.y = 10.3 + Math.sin(Math.PI * t.flip) * 2.5; }
     this.crowd.update(tt, this.phase === 'race' ? 0.5 : this.phase === 'done' ? 0.6 : 0.15);
+    if (!paused) {
+      this.fire.update(tt); this.win.update(dt, tt);
+      // sparks up from the fire, and a little icing-sugar snow over the course
+      this.fx = (this.fx || 0) - dt;
+      if (this.fx <= 0 && this.ctx.kit.quality.grass > 0.5) {
+        this.fx = 0.1;
+        this.particles.emit((Math.random() - 0.5) * 360, 70, (Math.random() - 0.5) * 220, { vy: -4, spread: 0.8, up: 0, color: 0xffffff, size: 1.2, life: 14, alpha: 0.75, grav: 0, grow: 1 });
+        if (Math.random() < 0.4) this.particles.emit(30 + (Math.random() - 0.5) * 30, 12, -190, { vy: 8, spread: 3, up: 4, color: 0xffa040, size: 0.6, life: 1.4, alpha: 0.9, grav: -2, grow: 0.8 });
+      }
+    }
     this.updateHud();
     this.applyCamera(dt);
   }
@@ -732,7 +751,7 @@ class Biathlon {
 export default {
   id: 'biathlon', name: 'Biathlon', season: 'Winter',
   blurb: 'Three laps round the coffee table, over a sofa cushion and through a felt forest, with two shootings.',
-  venue: 'A cotton-wool loop round the coffee table, up and over a sofa cushion, felt fir trees and a shoebox shooting range.',
+  venue: 'The living room on a winter evening, the fire lit: a cotton-wool loop round the coffee table, up and over a sofa cushion, felt fir trees and a shoebox shooting range.',
   loading: 'Laying out the cotton wool…',
   how: [
     { verb: 'Rhythm', text: 'Skate with <b>left</b>, <b>right</b> in turn: an easy beat on the flat, a faster, harder one up the cushion (your heart rate climbs too).' },

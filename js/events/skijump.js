@@ -10,6 +10,7 @@ import * as P from './skijump-physics.js';
 import { Particles } from '../fx.js';
 import { winFor, helped } from '../sizes.js';
 import { clamp, damp, rng, makeNoise2D } from '../util.js';
+import { paneWindow, snowSky, FairyLights, snowCrowd, ChristmasTree } from '../venues.js';
 
 const HILL_Z = 22;            // the hill is 44 wide (z from -22 to 22)
 const OUTRUN_X = 166;         // where the baking tray starts
@@ -51,10 +52,11 @@ class SkiJump {
   // ---------------------------------------------------------------- venue
   async build() {
     const { kit: K, R, competitors } = this.ctx;
+    // a snowy December afternoon: cool light from the window, the tree lights glowing warm
     R.setLighting({
-      sunDir: [-0.5, 1, 0.7], sunColor: 0xfff1e0, sunIntensity: 2.0,
-      hemiSky: 0xdfe8f8, hemiGround: 0x5c4f45, hemiIntensity: 0.6,
-      envIntensity: 0.45, exposure: 0.88, background: 0x1c2130, shadowRadius: 4,
+      sunDir: [-0.35, 0.8, -0.75], sunColor: 0xdce6ff, sunIntensity: 1.8,
+      hemiSky: 0xd4def4, hemiGround: 0x5c4f45, hemiIntensity: 0.58,
+      envIntensity: 0.42, exposure: 0.92, background: 0x1c2130, shadowRadius: 4,
     });
     this.noise = makeNoise2D(17);
     this.buildRoom(K);
@@ -141,26 +143,13 @@ class SkiJump {
     const skirt = new THREE.Mesh(new THREE.BoxGeometry(1000, 10, 2), K.paint(0xf7f4ee));
     skirt.position.set(60, 5, WZ + 1); skirt.castShadow = true; skirt.receiveShadow = true;
     g.add(skirt);
-    // window: snowy evening outside
-    const sc = K.TX.makeCanvas(256, 256), s = sc.getContext('2d');
-    const sky = s.createLinearGradient(0, 0, 0, 256);
-    sky.addColorStop(0, '#5f78a8'); sky.addColorStop(0.6, '#a9bcd9'); sky.addColorStop(1, '#e9eef6');
-    s.fillStyle = sky; s.fillRect(0, 0, 256, 256);
-    s.fillStyle = '#f4f7fb';
-    s.beginPath(); s.moveTo(0, 200); s.quadraticCurveTo(60, 160, 120, 190); s.quadraticCurveTo(190, 150, 256, 185); s.lineTo(256, 256); s.lineTo(0, 256); s.fill();
-    s.fillStyle = '#2f3f5a';
-    for (const [x, h] of [[30, 40], [52, 30], [200, 46], [226, 34]]) { s.beginPath(); s.moveTo(x, 200 - h); s.lineTo(x - 12, 200); s.lineTo(x + 12, 200); s.fill(); }
-    s.fillStyle = 'rgba(255,255,255,0.9)';
-    for (let k = 0; k < 90; k++) { s.beginPath(); s.arc(r() * 256, r() * 230, 0.8 + r() * 1.8, 0, Math.PI * 2); s.fill(); }
+    // the window: snow falling on the hills outside, fairy lights along the top
     const wx = 70, wy = 125, ww = 120, wh = 92;
-    const glass = new THREE.Mesh(new THREE.PlaneGeometry(ww, wh), new THREE.MeshBasicMaterial({ map: K.TX.toTexture(sc, { wrap: false }) }));
-    glass.position.set(wx, wy, WZ + 0.6);
-    g.add(glass);
-    const frameM = K.paint(0xf6f2ea, { roughness: 0.45 });
-    const bar = (w2, h2, x, y) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w2, h2, 2.4), frameM); m.position.set(x, y, WZ + 1.2); m.castShadow = true; g.add(m); };
-    bar(ww + 6, 4, wx, wy + wh / 2 + 2); bar(ww + 6, 4, wx, wy - wh / 2 - 2); bar(4, wh, wx - ww / 2 - 2, wy); bar(4, wh, wx + ww / 2 + 2, wy); bar(2.4, wh, wx, wy); bar(ww, 2.4, wx, wy);
-    const sill = new THREE.Mesh(new THREE.BoxGeometry(ww + 14, 2.4, 9), frameM);
-    sill.position.set(wx, wy - wh / 2 - 5, WZ + 4.5); sill.castShadow = true; sill.receiveShadow = true; g.add(sill);
+    this.win = paneWindow(g, { x: wx, y: wy, z: WZ + 0.2, w: ww, h: wh, sky: snowSky(12), frame: 0xf6f2ea, snow: K.quality.grass > 0.5 ? 90 : 0, depth: 3 });
+    this.winLights = new FairyLights(g, [[wx - 72, wy + 52, WZ + 4], [wx - 24, wy + 55, WZ + 4], [wx + 24, wy + 55, WZ + 4], [wx + 72, wy + 52, WZ + 4]], { sag: 5, per: 6, halo: 6, seed: 33 });
+    // the Christmas tree in the corner, with a warm glow round it
+    this.tree = new ChristmasTree(g, { x: 262, z: -88, h: 100, seed: 6 });
+    const glow = new THREE.PointLight(0xffb35c, 2600, 0, 2); glow.position.set(262, 60, -60); g.add(glow);
     // paper snowflakes on the window and the wall
     const fc = K.TX.makeCanvas(128), f = fc.getContext('2d');
     f.translate(64, 64); f.fillStyle = '#ffffff';
@@ -556,7 +545,8 @@ class SkiJump {
     }
     for (let k = 0; k < 6; k++) spots.push({ x: 248 + k * 15 + this.r() * 4, y: 1.2, z: -42 - (k % 2) * 7, ry: -0.2 + this.r() * 0.4, size: 11 + this.r() * 2 });
     for (let k = 0; k < 3; k++) spots.push({ x: -150 - k * 30, y: 41, z: 4 + (k % 2) * 6, ry: 0.5, size: 13 });
-    this.crowd = crowd(g, spots, 23);
+    // the crowd: a gang of snowmen in woolly scarves
+    this.crowd = snowCrowd(g, spots, 23);
     const codes = competitors.map((c) => c.code);
     [[236, -56], [292, -52], [-40, -60], [100, -86]].forEach(([x, z], k) => {
       const b = banner(codes[k % codes.length], 15, { seed: 40 + k });
@@ -965,6 +955,7 @@ class SkiJump {
     }
     const lvl = this.phase === 'flight' ? this.excite : this.phase === 'landed' && this.land && !this.land.fall ? 0.7 : this.phase === 'done' ? 0.6 : 0.15;
     this.crowd.update(tt, lvl);
+    if (!paused) { this.tree.update(tt); this.winLights.update(tt); this.win.update(dt, tt); }
     for (const jj of this.judges) jj.a.update(tt, jj.up ? 0.25 : 0);
     if (!paused) ctx.sound.setLoop('crowd', 0.2 + lvl * 0.5);
     const sign = this.gustSign, f = this.flight;
@@ -1099,7 +1090,7 @@ class SkiJump {
 export default {
   id: 'skijump', name: 'Ski jump', season: 'Winter',
   blurb: 'Down an ironing board, over a mountain of sofa cushions: two jumps each, judged for distance and style.',
-  venue: 'An ironing board leaned on the sofa, a ruler on a step stool, and a duvet over every cushion in the house.',
+  venue: 'The living room in December, the tree up: an ironing board leaned on the sofa, a ruler on a step stool, and a duvet over every cushion in the house.',
   loading: 'Piling up the sofa cushions…',
   how: [
     { verb: 'Timing', text: 'Tap <b>action</b> to push off. On the ruler, tap <b>action</b> again in the <b>green zone</b> to jump.' },

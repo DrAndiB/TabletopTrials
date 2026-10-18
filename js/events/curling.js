@@ -11,6 +11,7 @@ import { flagCanvas } from '../flags.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles } from '../fx.js';
 import { fitRhythm, winFor, helped } from '../sizes.js';
+import { paneWindow, sunriseSky, eggCrowd } from '../venues.js';
 import { clamp, damp, rng, makeNoise2D } from '../util.js';
 
 const R = 1.6;                 // a bottle cap
@@ -82,10 +83,11 @@ class Curling {
   // ---------------------------------------------------------------- venue
   async build() {
     const { kit: K, R: RR, competitors } = this.ctx;
+    // breakfast on a winter morning: the sun just up, low and golden through the kitchen window
     RR.setLighting({
-      sunDir: [0.3, 1, 0.5], sunColor: 0xfff0dc, sunIntensity: 2.0,
-      hemiSky: 0xf4f6ff, hemiGround: 0x6a4a33, hemiIntensity: 0.65,
-      envIntensity: 0.6, exposure: 0.96, background: 0x2a2421, shadowRadius: 4,
+      sunDir: [0.3, 0.62, -0.72], sunColor: 0xffd2a0, sunIntensity: 2.3,
+      hemiSky: 0xe2e8f6, hemiGround: 0x6a4a33, hemiIntensity: 0.62,
+      envIntensity: 0.55, exposure: 0.98, background: 0x2a2421, shadowRadius: 4,
     });
     this.noise = makeNoise2D(53);
     this.buildKitchen(K);
@@ -162,7 +164,10 @@ class Curling {
     const wall = new THREE.Mesh(new THREE.PlaneGeometry(900, 300), K.std({ color: 0xf1e6cf, roughness: 0.95 }));
     wall.position.set(80, 40, -150); g.add(wall);
     const cup = K.std({ color: 0x9cc7a3, roughness: 0.5 });
+    // the window over the sink, between the cupboards
+    this.win = paneWindow(g, { x: 66, y: 76, z: -149.6, w: 112, h: 72, sky: sunriseSky(3), depth: 3 });
     for (let k = 0; k < 7; k++) {
+      if (k >= 2 && k <= 4) continue;
       const m = new THREE.Mesh(new K.RoundedBoxGeometry(58, 70, 4, 2, 1), cup);
       m.position.set(-120 + k * 62, 70, -146); m.castShadow = true; g.add(m);
       const knob = new THREE.Mesh(new THREE.SphereGeometry(1.6, 12, 8), K.metal(0xd9c08a, 0.3));
@@ -184,6 +189,27 @@ class Curling {
     for (const [c, r, dx, dz] of fruit) { const m = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 14), K.std({ color: c, roughness: 0.45 })); m.position.set(210 + dx, 6.5, -40 + dz); m.castShadow = true; g.add(m); }
     const mug = (x, z, col) => { const m = new THREE.Mesh(K.lathe([[0.01, 0], [4, 0], [4.2, 9], [3.7, 9], [3.6, 0.6], [0.01, 0.6]], 24), K.std({ color: col, roughness: 0.35 })); m.position.set(x, 0, z); m.castShadow = true; g.add(m); const h = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.55, 8, 16, Math.PI), K.std({ color: col, roughness: 0.35 })); h.rotation.z = -Math.PI / 2; h.position.set(x + 4, 4.5, z); g.add(h); };
     mug(-20, 40, 0xe23b2e); mug(-8, 46, 0x2f6fe0);
+    // breakfast: a teapot in a knitted cosy, a toast rack, jam, the cereal box and the milk
+    const cc = K.TX.makeCanvas(64, 64), c2 = cc.getContext('2d');
+    for (let y = 0; y < 64; y += 8) { c2.fillStyle = ['#d9472b', '#f7f2e8', '#2fae5a', '#f7f2e8'][(y / 8) % 4]; c2.fillRect(0, y, 64, 8); }
+    const cosy = new THREE.Mesh(new THREE.SphereGeometry(10, 24, 14, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 1.15, 1), K.felt(0xffffff, { map: K.TX.toTexture(cc, { repeat: [1, 1] }) }));
+    cosy.position.set(238, 0, 34); cosy.castShadow = true; g.add(cosy);
+    const pom = new THREE.Mesh(new THREE.SphereGeometry(2.6, 12, 10), K.felt(0xf2c230)); pom.position.set(238, 12.3, 34); pom.castShadow = true; g.add(pom);
+    const spout = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.6, 9, 10), K.std({ color: 0xf4efe6, roughness: 0.3 })); spout.position.set(230, 5, 34); spout.rotation.z = 0.9; g.add(spout);
+    const toast = [];
+    for (let k = 0; k < 4; k++) toast.push({ x: 26 + k * 3.4, y: 6, z: 46, sx: 1, sy: 1, sz: 1, rz: (k % 2 ? 0.06 : -0.06) });
+    K.instances(new K.RoundedBoxGeometry(1.4, 11, 10, 2, 0.6), K.std({ color: 0xd9a066, roughness: 0.9 }), toast);
+    const rack = new THREE.Mesh(new THREE.TorusGeometry(7, 0.3, 4, 16, Math.PI), K.metal(0xd0d4da, 0.3)); rack.position.set(31, 0, 46); g.add(rack);
+    const jam = new THREE.Mesh(K.lathe([[0.01, 0], [3.4, 0], [3.6, 6.5], [3, 7.4], [0.01, 7.4]], 20), K.glass(0xc0262b, 0.75)); jam.position.set(52, 0, 44); jam.castShadow = true; g.add(jam);
+    const jl = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.4, 1.4, 20), K.std({ color: 0xf7f2e8, roughness: 0.9 })); jl.position.set(52, 8, 44); g.add(jl);
+    const bc = K.TX.makeCanvas(128, 192), b2 = bc.getContext('2d');
+    b2.fillStyle = '#f2c230'; b2.fillRect(0, 0, 128, 192); b2.fillStyle = '#d9472b'; b2.fillRect(0, 0, 128, 44);
+    b2.fillStyle = '#fff'; b2.font = '34px "Lilita One", Impact, sans-serif'; b2.textAlign = 'center'; b2.fillText('CRUNCH', 64, 34);
+    b2.fillStyle = '#c98a4b'; for (let k = 0; k < 12; k++) { b2.beginPath(); b2.arc(30 + (k % 4) * 22, 90 + Math.floor(k / 4) * 26, 9, 0, Math.PI * 2); b2.fill(); }
+    const box = new THREE.Mesh(new THREE.BoxGeometry(14, 22, 5), [0, 1, 2, 3, 4, 5].map((k) => k === 4 ? K.std({ map: K.TX.toTexture(bc, { wrap: false }), roughness: 0.7 }) : K.std({ color: 0xf2c230, roughness: 0.7 })));
+    box.position.set(-24, 11, -44); box.rotation.y = 0.25; box.castShadow = true; g.add(box);
+    const milk = new THREE.Mesh(K.lathe([[0.01, 0], [3.4, 0], [3.6, 10], [2, 13], [1.8, 15], [0.01, 15]], 20), K.std({ color: 0xf7f7f2, roughness: 0.3 })); milk.position.set(-6, 0, -42); milk.castShadow = true; g.add(milk);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 1, 14), K.std({ color: 0x2f6fe0 })); cap.position.set(-6, 15.4, -42); g.add(cap);
     for (const [x, col] of [[180, 0xffffff], [186, 0x3a3634]]) { const m = new THREE.Mesh(K.lathe([[0.01, 0], [1.8, 0], [2, 4], [1.4, 6.5], [0.01, 6.8]], 16), K.std({ color: col, roughness: 0.4 })); m.position.set(x, 0, 42); m.castShadow = true; g.add(m); }
   }
 
@@ -238,10 +264,12 @@ class Curling {
 
   buildCrowd(K, competitors) {
     const spots = [];
-    for (let k = 0; k < 5; k++) spots.push({ x: 166 + k * 9, y: 0, z: -34 + (k % 2) * 3, ry: -0.5, size: 9 + this.r() * 2 });
-    for (let k = 0; k < 4; k++) spots.push({ x: 60 + k * 26, y: 0, z: -40 - (k % 2) * 4, ry: 0.1, size: 10 });
-    for (let k = 0; k < 3; k++) spots.push({ x: 170 + k * 11, y: 0, z: 34 + (k % 2) * 3, ry: -2.6, size: 9 });
-    this.crowd = crowd(K.group, spots, 47);
+    // facing the sheet, turned a little towards the target
+    for (let k = 0; k < 5; k++) spots.push({ x: 166 + k * 9, y: 0, z: -34 + (k % 2) * 3, ry: -1.0, size: 9 + this.r() * 2 });
+    for (let k = 0; k < 4; k++) spots.push({ x: 60 + k * 26, y: 0, z: -40 - (k % 2) * 4, ry: -1.1, size: 10 });
+    for (let k = 0; k < 3; k++) spots.push({ x: 170 + k * 11, y: 0, z: 34 + (k % 2) * 3, ry: 1.1, size: 9 });
+    // the crowd: boiled eggs in egg cups, some in knitted cosies
+    this.crowd = eggCrowd(K.group, spots, 47);
     [[100, -48], [40, -50], [225, 10]].forEach(([x, z], k) => {
       const b = banner(competitors[k % competitors.length].code, 12, { seed: 70 + k });
       b.position.set(x, 0, z); b.rotation.y = k === 2 ? -Math.PI / 2 : 0;
@@ -704,7 +732,7 @@ class Curling {
 export default {
   id: 'curling', name: 'Curling', season: 'Winter',
   blurb: 'Bottle caps down the polished kitchen table at a paper target. Knock the others out!',
-  venue: 'The kitchen table, polished till it shines, with a paper target taped at the far end.',
+  venue: 'The kitchen table at breakfast on a winter morning, polished till it shines, with a paper target taped at the far end.',
   loading: 'Polishing the kitchen table…',
   how: [
     { verb: 'Steer', text: 'Aim with <b>left</b> and <b>right</b>. Aimed straight, the cap slides straight. Aimed to one side, it spins and curls back towards the middle, round a cap in the way. The dotted line shows the path.' },

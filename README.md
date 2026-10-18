@@ -10,6 +10,11 @@ animals cheer from cardboard-box stands. Sibling of [Tabletop Turbo](https://git
 - Up to four players on one keyboard (each player has left, right and action), on touch screens, or
   against computer kids (easy, normal, hard). Every team picks a country: real flags, a capital and a
   fun fact on the way in.
+- **A room for every event**: the front hall on a sunny morning, a bathroom, a bedroom at dusk, the
+  living room on a Sunday afternoon, the playroom, the living room in December, a night kitchen, a winter
+  breakfast table, the attic on a snowy day, the garage and a fireside evening, each with its own crowd
+  (rubber ducks, gingerbread people, snowmen, egg cups, robots, penguins) and something alive in it
+  (a cat, a sleeping dog, a robot vacuum, a goldfish, a toy train, flickering fire and fairy lights).
 - **Player sizes**: every human player is Little (3–5), Kid (6–9) or Big (10+). Smaller players tap a
   slower beat, get wider timing windows, and Little players get helpers that take over the extra rules,
   so each event comes down to one trick (the helpers are listed on each event's intro). Nobody is left

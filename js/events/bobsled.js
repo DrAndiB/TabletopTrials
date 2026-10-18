@@ -11,12 +11,14 @@ import { clamp, damp, rng, makeNoise2D } from '../util.js';
 import { hudKit, Card, Guide, Tags, Skipper, beatGauge, fmtTime } from './common.js';
 import { fitRhythm, winFor, helped } from '../sizes.js';
 import { buildTrack, stepSled, autoSteer, phiStar, RT, PUSH } from './bobsled-track.js';
+import { sunPatch, sunbeams, FairyLights } from '../venues.js';
 
 const RUNS_FEW = 2, RUNS_MANY = 1;    // two runs each for one or two crews, one for three or four
 const BEAM = 6;                        // the clock starts here
 const JUMP_ZONE = 6;                   // the green stripe at the end of the push: jump in here
 const INTRO_T = 7;                     // the camera flies down the course before the first run
-const TARGET = 6.0, VPUSH = 17;        // push cadence, top push speed
+const TARGET = 6.0, VPUSH = 17;
+const BSUN = [0.25, 1, -0.35];          // towards the skylight, high in the roof        // push cadence, top push speed
 const LANE = 1.4;                      // half the width of a sled
 // computer drivers: push cadence share, where they jump in (units before the end of the push), steering deadband and delay
 const BOT = {
@@ -52,10 +54,11 @@ class Bobsled {
 
   async build() {
     const { kit: K, R, competitors } = this.ctx;
+    // the attic on a snowy day: cold white light down through the skylight, string lights glowing
     R.setLighting({
-      sunDir: [0.35, 1, 0.4], sunColor: 0xfff0dc, sunIntensity: 2.0,
-      hemiSky: 0xf2f4ff, hemiGround: 0x6a4a33, hemiIntensity: 0.68,
-      envIntensity: 0.6, exposure: 0.98, background: 0x2a2421, shadowRadius: 4,
+      sunDir: BSUN, sunColor: 0xe6eeff, sunIntensity: 2.1,
+      hemiSky: 0xc8d2ea, hemiGround: 0x5a4430, hemiIntensity: 0.58,
+      envIntensity: 0.5, exposure: 0.98, background: 0x1e1a18, shadowRadius: 4,
     });
     this.noise = makeNoise2D(91);
     // a perfect run gives the speed the red line is drawn for
@@ -97,14 +100,53 @@ class Bobsled {
   buildRoom(K) {
     const g = K.group;
     const b = this.bounds();
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(b.w + 400, b.d + 400).rotateX(-Math.PI / 2), floorMaterial({ seed: 33, repeat: 10, base: 0xb07f55 }));
+    // wide old attic boards, a braided rag rug, moving boxes round the edges, light from the skylight
+    const T = K.TX.woodTextures({ size: 1024, planks: 3, base: 0x9a8268, dark: 0x5e4a38, light: 0xb9a184, seed: 55, ringFreq: 8, roughBase: 0.7, lacquer: 0.05, grainContrast: 0.9 });
+    for (const k of ['map', 'normalMap', 'roughnessMap']) if (T[k]) T[k].repeat.set((b.w + 400) / 150, (b.d + 400) / 150);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(b.w + 400, b.d + 400).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ ...T }));
     floor.position.set(b.cx, 0, b.cz); floor.receiveShadow = true; g.add(floor);
-    // a big rug under the middle of the run
-    const rc = K.TX.makeCanvas(256), r2 = rc.getContext('2d');
-    r2.fillStyle = '#2f4f7a'; r2.fillRect(0, 0, 256, 256); r2.fillStyle = '#e9d8b8'; r2.fillRect(10, 10, 236, 236); r2.fillStyle = '#7a9cc6'; r2.fillRect(20, 20, 216, 216);
-    for (let y = 30; y < 230; y += 20) for (let x = 30; x < 230; x += 20) { r2.fillStyle = (x + y) % 40 ? '#e9d8b8' : '#2f4f7a'; r2.fillRect(x, y, 6, 6); }
-    const rug = new THREE.Mesh(new THREE.PlaneGeometry(b.w * 0.8, b.d * 0.8).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(rc, { wrap: false }), roughness: 1 }));
-    rug.position.set(b.cx, 0.2, b.cz); rug.receiveShadow = true; g.add(rug);
+    const rc = K.TX.makeCanvas(512), r2 = rc.getContext('2d');
+    const bands = ['#a65a45', '#e6d6bc', '#7f9a78', '#c99a5e', '#5d6b8a', '#e6d6bc', '#b07a62', '#8a7f6e', '#d8c7a6'];
+    for (let k = 0; k < 22; k++) { r2.fillStyle = bands[k % bands.length]; r2.beginPath(); r2.ellipse(256, 256, 254 - k * 11.5, 254 - k * 11.5, 0, 0, Math.PI * 2); r2.fill(); }
+    r2.strokeStyle = 'rgba(0,0,0,0.12)'; r2.lineWidth = 2; for (let k = 0; k < 44; k++) { r2.beginPath(); r2.ellipse(256, 256, 254 - k * 5.75, 254 - k * 5.75, 0, 0, Math.PI * 2); r2.stroke(); }
+    const rug = new THREE.Mesh(new THREE.CircleGeometry(1, 64).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(rc, { wrap: false }), roughness: 1 }));
+    rug.scale.set(b.w * 0.42, 1, b.d * 0.42); rug.position.set(b.cx, 0.2, b.cz); rug.receiveShadow = true; g.add(rug);
+    // moving boxes, taped and labelled, round the edges of the run
+    const labels = ['XMAS', 'TOYS', 'BOOKS', 'WINTER', 'BABY CLOTHES', 'LEGO', 'PHOTOS', 'SKIS?'];
+    const boxMats = labels.map((l, i) => {
+      const c = K.TX.makeCanvas(256, 128), x = c.getContext('2d');
+      x.fillStyle = '#c69a62'; x.fillRect(0, 0, 256, 128);
+      x.fillStyle = 'rgba(214,170,104,0.85)'; x.fillRect(110, 0, 36, 128);
+      x.fillStyle = '#2b2622'; x.font = `${l.length > 8 ? 26 : 38}px "Lilita One", Impact, sans-serif`; x.textAlign = 'center'; x.fillText(l, 128, 84);
+      void i;
+      return new THREE.MeshStandardMaterial({ map: K.TX.toTexture(c, { wrap: false }), roughness: 0.9 });
+    });
+    const plain = new THREE.MeshStandardMaterial({ color: 0xbf9259, roughness: 0.92 });
+    const tapeTop = new THREE.MeshStandardMaterial({ color: 0xc9a46c, roughness: 0.8 });
+    const placed = [];
+    const clear = (x, z, r) => { for (const p of this.track.pts) if (Math.hypot(p.x - x, p.z - z) < r + RT + 8) return false; for (const q of placed) if (Math.hypot(q[0] - x, q[1] - z) < r + q[2]) return false; return true; };
+    const rr = rng(77);
+    for (let k = 0, tries = 0; k < 18 && tries < 400; tries++) {
+      const a = rr() * Math.PI * 2, d = 0.55 + rr() * 0.25;
+      const x = b.cx + Math.cos(a) * (b.w * d), z = b.cz + Math.sin(a) * (b.d * d);
+      const w = 26 + rr() * 16, h = 18 + rr() * 14, dd = 22 + rr() * 10;
+      if (!clear(x, z, Math.max(w, dd) * 0.75)) continue;
+      placed.push([x, z, Math.max(w, dd) * 0.75]);
+      const bm = boxMats[k % boxMats.length];
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, dd), [plain, plain, tapeTop, plain, bm, plain]);
+      m.position.set(x, h / 2, z); m.rotation.y = Math.atan2(b.cx - x, b.cz - z) + (rr() - 0.5) * 0.4; m.castShadow = true; m.receiveShadow = true; g.add(m);
+      if (rr() < 0.4) { const m2 = new THREE.Mesh(new THREE.BoxGeometry(w * 0.8, h * 0.7, dd * 0.8), [plain, plain, tapeTop, plain, boxMats[(k + 3) % boxMats.length], plain]); m2.position.set(x, h + h * 0.35, z); m2.rotation.y = m.rotation.y + (rr() - 0.5) * 0.5; m2.castShadow = true; g.add(m2); }
+      k++;
+    }
+    // the skylight: a patch of light on the boards, a shaft of it with dust in it
+    const sx = b.cx + b.w * 0.12, sz = b.cz - b.d * 0.1, SY = 240;
+    sunPatch(g, { corners: [[sx - 40, SY, sz + 30], [sx + 40, SY, sz + 30], [sx + 40, SY, sz - 30], [sx - 40, SY, sz - 30]], sun: BSUN, y: 0.35, color: 0xdfe8ff, opacity: 0.28 });
+    this.beams = sunbeams(g, { from: [sx, SY - 60, sz], dir: BSUN.map((v) => -v), length: 200, width: 40, n: 2, spread: 30, color: 0xe6eeff, opacity: 0.05 });
+    this.dust = { x: sx - BSUN[0] * 120, z: sz - BSUN[2] * 120, t: 0 };
+    // string lights looped from the toy chest along the boxes
+    const ring = [];
+    for (let k = 0; k <= 16; k++) { const a = (k / 16) * Math.PI * 2; ring.push([b.cx + Math.cos(a) * (b.w * 0.62 + 30), 30 + (k % 2) * 6, b.cz + Math.sin(a) * (b.d * 0.62 + 30)]); }
+    this.lights = new FairyLights(g, ring, { sag: 6, per: 6, halo: 6, seed: 19 });
     // the toy chest at the top, holding the start
     const s0 = this.frameAt(PUSH / 2);
     const h = s0.c.y - RT - 1;
@@ -488,6 +530,12 @@ class Bobsled {
     if (cr && this.sl && this.phase !== 'done') this.poseSled(cr, tt, dt, paused);
     if (!paused) { this.cardT = (this.cardT || 0) + dt; if (this.cardT > 0.1) { this.cardT = 0; if (this.phase === 'run') this.updateCard(); } }
     this.crowd.update(tt, this.phase === 'run' ? 0.6 : this.phase === 'finished' ? 0.7 : 0.15);
+    if (!paused) {
+      this.lights.update(tt); this.beams.update(tt);
+      // dust drifting in the skylight's shaft
+      this.dust.t -= dt;
+      if (this.dust.t <= 0 && this.ctx.kit.quality.grass > 0.5) { this.dust.t = 0.12; this.particles.emit(this.dust.x + (Math.random() - 0.5) * 70, 20 + Math.random() * 90, this.dust.z + (Math.random() - 0.5) * 50, { vy: -0.6, spread: 1.2, up: 1.2, color: 0xfff6e0, size: 0.5, life: 5, alpha: 0.7, grav: 0, grow: 1 }); }
+    }
     this.updateHud();
     this.applyCamera(dt);
   }
@@ -622,7 +670,7 @@ class Bobsled {
 export default {
   id: 'bobsled', name: 'Bobsled', season: 'Winter',
   blurb: 'Down a run of poster tubes from the top of the toy chest: push off, jump in, hold the line.',
-  venue: 'Poster tubes cut in half and frosted with icing sugar, on stacks of books from the toy chest to the floor.',
+  venue: 'The attic on a snowy day: poster tubes cut in half and frosted with icing sugar, on stacks of books from the toy chest to the floor.',
   loading: 'Taping the tubes together…',
   how: [
     { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to push the sled off.' },

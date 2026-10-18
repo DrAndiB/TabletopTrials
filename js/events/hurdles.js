@@ -225,7 +225,7 @@ class Hurdles extends Sprint {
 export default {
   id: 'hurdles', name: 'Hurdles', season: 'Summer',
   blurb: 'The chalk track with ten pencil-and-domino hurdles per lane: tap, tap, tap, tap, jump!',
-  venue: 'The playroom floor: in every lane, ten pencils balanced on dominoes, with a chalk mark to jump from.',
+  venue: 'The front hall: in every lane, ten pencils balanced on dominoes, with a chalk mark to jump from.',
   loading: 'Balancing pencils on dominoes…',
   how: [
     { verb: 'Timing', text: 'In the blocks, hold <b>action</b> and let go on the <b>whistle</b>.' },

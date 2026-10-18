@@ -7,9 +7,10 @@ import { Figurine, POSES, REST, blendPose } from '../figurine.js';
 import { crowd, banner, floorMaterial } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles } from '../fx.js';
-import { clamp, damp, rng, makeNoise2D } from '../util.js';
+import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
 import { fitRhythm, winFor, helped, sizeOf } from '../sizes.js';
 import { hudKit, Card, Guide, Tags, Skipper, beatGauge } from './common.js';
+import { bakeStatic } from '../venues.js';
 
 const U = 4.75;                 // units per metre (a figurine is a 1.75 m vaulter)
 const BOX_X = -2;               // where the straw plants
@@ -48,10 +49,11 @@ class PoleVault {
 
   async build() {
     const { kit: K, R, competitors } = this.ctx;
+    // the playroom on a bright, cool morning
     R.setLighting({
-      sunDir: [-0.4, 1, 0.55], sunColor: 0xffe6c8, sunIntensity: 2.15,
-      hemiSky: 0xfff3e2, hemiGround: 0x6a4a33, hemiIntensity: 0.62,
-      envIntensity: 0.55, exposure: 0.98, background: 0x2a2019, shadowRadius: 4,
+      sunDir: [-0.4, 1, 0.55], sunColor: 0xfff4e4, sunIntensity: 2.2,
+      hemiSky: 0xeef6ff, hemiGround: 0x8a7a6a, hemiIntensity: 0.68,
+      envIntensity: 0.6, exposure: 1.0, background: 0x2a2019, shadowRadius: 4,
     });
     this.noise = makeNoise2D(41);
     this.buildRoom(K);
@@ -97,15 +99,41 @@ class PoleVault {
   }
 
   buildRoom(K) {
-    const g = K.group;
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(800, 400).rotateX(-Math.PI / 2), floorMaterial({ seed: 21, repeat: 7, base: 0xc39066 }));
+    const g = new THREE.Group();
+    K.group.add(g);
+    // a floor of foam puzzle tiles, and a sunny wall with a painted rainbow and bunting
+    const fc = K.TX.makeCanvas(512), f = fc.getContext('2d');
+    const tiles = ['#f08a7e', '#7fb2ea', '#f5d26b', '#86d0a0'];
+    f.fillStyle = '#d9d2c4'; f.fillRect(0, 0, 512, 512);
+    for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) {
+      f.fillStyle = tiles[(i + j * 2 + j) % 4]; f.fillRect(i * 256 + 2, j * 256 + 2, 252, 252);
+      // jigsaw nubs along the edges
+      for (let k = 0; k < 4; k++) {
+        f.fillStyle = tiles[(i + j * 2 + j + 1) % 4];
+        f.beginPath(); f.arc(i * 256 + 32 + k * 64, j * 256 + (k % 2 ? 2 : 254), 14, 0, TAU); f.fill();
+        f.fillStyle = tiles[(i + j * 2 + j + 2) % 4];
+        f.beginPath(); f.arc(i * 256 + (k % 2 ? 2 : 254), j * 256 + 32 + k * 64, 14, 0, TAU); f.fill();
+      }
+    }
+    const img = f.getImageData(0, 0, 512, 512), d = img.data;
+    for (let y = 0; y < 512; y++) for (let x = 0; x < 512; x++) { const k = (y * 512 + x) * 4, v = 0.95 + 0.05 * this.noise.noise(x * 0.3, y * 0.3); d[k] *= v; d[k + 1] *= v; d[k + 2] *= v; }
+    f.putImageData(img, 0, 0);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(800, 400).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(fc, { repeat: [10, 5] }), roughness: 0.92 }));
     floor.position.set(-20, 0, -40); floor.receiveShadow = true; g.add(floor);
     const wc = K.TX.makeCanvas(256), w = wc.getContext('2d');
-    w.fillStyle = '#f3e3c3'; w.fillRect(0, 0, 256, 256);
-    w.strokeStyle = '#e2c99c'; w.lineWidth = 6;
-    for (let x = 0; x < 256; x += 32) { w.beginPath(); w.moveTo(x, 0); w.lineTo(x, 256); w.stroke(); }
+    w.fillStyle = '#fbf3df'; w.fillRect(0, 0, 256, 256);
+    w.fillStyle = 'rgba(240,190,120,0.18)'; for (let y = 0; y < 256; y += 32) for (let x = (y / 32) % 2 ? 16 : 0; x < 256; x += 32) { w.beginPath(); w.arc(x, y, 4, 0, TAU); w.fill(); }
     const wall = new THREE.Mesh(new THREE.PlaneGeometry(800, 260), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(wc, { repeat: [26, 7] }), roughness: 0.95 }));
     wall.position.set(-20, 130, -110); wall.receiveShadow = true; g.add(wall);
+    const rc = K.TX.makeCanvas(512, 256), r2 = rc.getContext('2d');
+    ['#e8695f', '#f2a64a', '#f5d26b', '#86d0a0', '#7fb2ea', '#a58ad8'].forEach((col, k) => { r2.strokeStyle = col; r2.lineWidth = 26; r2.beginPath(); r2.arc(256, 256, 230 - k * 26, Math.PI, 0); r2.stroke(); });
+    r2.fillStyle = '#ffffff'; for (const cx of [70, 442]) for (let k = 0; k < 4; k++) { r2.beginPath(); r2.arc(cx + (k - 1.5) * 22, 236 - (k % 2) * 10, 24, 0, TAU); r2.fill(); }
+    const rainbow = new THREE.Mesh(new THREE.PlaneGeometry(150, 75), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(rc, { wrap: false }), transparent: true, roughness: 0.95 }));
+    rainbow.position.set(30, 118, -109.6); g.add(rainbow);
+    const flags = [], fcol = [0xe8695f, 0xf5d26b, 0x7fb2ea, 0x86d0a0, 0xa58ad8, 0xf2a64a];
+    for (let x = -200, k = 0; x <= 160; x += 7, k++) { const u = ((x + 200) % 120) / 120; flags.push({ x, y: 175 - Math.sin(u * Math.PI) * 14, z: -108, s: 1, color: fcol[k % fcol.length] }); }
+    const tri = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-2.6, 0, 0), new THREE.Vector3(2.6, 0, 0), new THREE.Vector3(0, -6, 0)]); tri.computeVertexNormals();
+    K.instances(tri, new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, roughness: 0.8 }), flags, { colors: true, cast: false });
     // the runway in masking tape, the plant tape, metre marks
     const Y = 0.05;
     const tapeM = new THREE.MeshStandardMaterial({ color: 0xe8d9a8, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -2 });
@@ -115,14 +143,48 @@ class PoleVault {
     z2.fillStyle = '#ffffff'; z2.font = '58px "Lilita One", Impact, sans-serif'; z2.textAlign = 'center'; z2.textBaseline = 'middle'; z2.fillText('PLANT', 128, 68);
     const zone = new THREE.Mesh(new THREE.PlaneGeometry(ZONE[1] - ZONE[0], 9).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(zc, { wrap: false }), roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -3 }));
     zone.position.set((ZONE[0] + ZONE[1]) / 2, Y + 0.01, 0); g.add(zone);
-    // a bookshelf, a toy box and a plant pot for the room
+    // a cube shelf with fabric bins, a play tent, the toy box, a rocking horse, and a train going round
+    const shelfM = K.paint(0xf7f2e8, { roughness: 0.5 });
+    const shelf = new THREE.Group(); shelf.position.set(-150, 0, -96); g.add(shelf);
+    for (const [w2, h2, x, y] of [[64, 2.4, 0, 1.2], [64, 2.4, 0, 31.2], [64, 2.4, 0, 61.2], [2.4, 62.4, -31, 31.2], [2.4, 62.4, 31, 31.2], [2.4, 62.4, 0, 31.2]]) { const m = new THREE.Mesh(new THREE.BoxGeometry(w2, h2, 26), shelfM); m.position.set(x, y, 0); m.castShadow = true; m.receiveShadow = true; shelf.add(m); }
+    [[0xe8695f, -15.5, 16], [0x7fb2ea, 15.5, 16], [0xf5d26b, -15.5, 46], [0x86d0a0, 15.5, 46]].forEach(([col, x, y]) => { const b = new THREE.Mesh(new K.RoundedBoxGeometry(26, 26, 22, 3, 2), K.felt(col)); b.position.set(x, y, 2); b.castShadow = true; shelf.add(b); });
+    const tc = K.TX.makeCanvas(256, 128), t2 = tc.getContext('2d');
+    for (let x = 0; x < 256; x += 32) { t2.fillStyle = (x / 32) % 2 ? '#f7f2e8' : '#e8695f'; t2.fillRect(x, 0, 32, 128); }
+    const stickM = K.std({ color: 0xc89a62 });
+    const tent = new THREE.Mesh(new THREE.ConeGeometry(30, 70, 6, 1, true), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(tc, { wrap: true }), side: THREE.DoubleSide, roughness: 0.95 }));
+    tent.position.set(160, 35, -78); tent.rotation.y = 0.3; tent.castShadow = true; tent.receiveShadow = true; g.add(tent);
+    for (let k = 0; k < 4; k++) { const a = (k / 4) * TAU + 0.4; const st = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 26, 6), stickM); st.position.set(160 + Math.cos(a) * 3, 76, -78 + Math.sin(a) * 3); st.rotation.set(Math.sin(a) * 0.3, 0, -Math.cos(a) * 0.3); g.add(st); }
+    const flap = new THREE.Mesh(new THREE.PlaneGeometry(18, 34), new THREE.MeshStandardMaterial({ color: 0x3a2a24, roughness: 1 })); flap.position.set(160, 17, -51.5); flap.rotation.x = -0.4; g.add(flap);
     const box = new THREE.Mesh(new K.RoundedBoxGeometry(44, 30, 26, 2, 1.5), K.paint(0x3d7bd9));
-    box.position.set(-140, 15, -70); box.castShadow = true; box.receiveShadow = true; g.add(box);
+    box.position.set(-80, 15, -86); box.castShadow = true; box.receiveShadow = true; g.add(box);
     const lid = new THREE.Mesh(new K.RoundedBoxGeometry(46, 3, 28, 2, 1), K.paint(0xf2c230));
-    lid.position.set(-140, 31.5, -70); lid.castShadow = true; g.add(lid);
-    const pot = new THREE.Mesh(K.lathe([[0.01, 0], [9, 0], [12, 20], [12.6, 21], [0.01, 21]], 24), K.std({ color: 0xc8643c, roughness: 0.8 }));
-    pot.position.set(90, 0, -80); pot.castShadow = true; g.add(pot);
-    for (let k = 0; k < 7; k++) { const leaf = new THREE.Mesh(new THREE.SphereGeometry(7, 12, 8), K.std({ color: 0x4f8f3a, roughness: 0.7 })); leaf.position.set(90 + Math.cos(k) * 8, 28 + (k % 3) * 6, -80 + Math.sin(k) * 8); leaf.scale.set(1, 1.6, 0.5); leaf.rotation.y = k; leaf.castShadow = true; g.add(leaf); }
+    lid.position.set(-80, 31.5, -86); lid.castShadow = true; g.add(lid);
+    // the rocking horse
+    const horse = new THREE.Group(); horse.position.set(104, 0, -84); horse.rotation.y = -0.4; horse.userData.live = true; g.add(horse);
+    const hw = K.paint(0xf7f2e8), hr = K.paint(0xe8695f);
+    const rocker = new THREE.Mesh(new THREE.TorusGeometry(26, 1.4, 8, 32, 1.2), hr); rocker.rotation.z = -Math.PI / 2 - 0.6; rocker.position.y = 27; horse.add(rocker);
+    const rocker2 = rocker.clone(); rocker2.position.z = 8; horse.add(rocker2); rocker.position.z = -8;
+    const hb = new THREE.Mesh(new THREE.SphereGeometry(8, 18, 12).scale(1.7, 0.85, 0.8), hw); hb.position.y = 18; hb.castShadow = true; horse.add(hb);
+    const hn = new THREE.Mesh(new THREE.CylinderGeometry(3, 4, 14, 12), hw); hn.position.set(11, 26, 0); hn.rotation.z = -0.5; hn.castShadow = true; horse.add(hn);
+    const hh = new THREE.Mesh(new THREE.SphereGeometry(4.2, 14, 10).scale(1.5, 0.9, 0.85), hw); hh.position.set(17, 32, 0); hh.castShadow = true; horse.add(hh);
+    const mane = new THREE.Mesh(new THREE.BoxGeometry(12, 3, 1.6), hr); mane.position.set(9, 31, 0); mane.rotation.z = -0.55; horse.add(mane);
+    for (const [lx, lz] of [[8, 4], [8, -4], [-8, 4], [-8, -4]]) { const leg = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 12, 8), hw); leg.position.set(lx, 9, lz); horse.add(leg); }
+    this.horse = horse;
+    // a wooden train on a circle of track by the toy box
+    const T0 = { x: -10, z: -82, r: 20 };
+    const track = new THREE.Mesh(new THREE.TorusGeometry(T0.r, 1.6, 4, 48).rotateX(Math.PI / 2).scale(1, 0.3, 1), K.std({ color: 0xd9b48a, roughness: 0.7 }));
+    track.position.set(T0.x, 0.5, T0.z); track.receiveShadow = true; g.add(track);
+    this.train = { T0, cars: [] };
+    [[0xe8695f, true], [0x7fb2ea], [0xf5d26b], [0x86d0a0]].forEach(([col, loco]) => {
+      const car = K.merge([
+        { geo: new K.RoundedBoxGeometry(7, 4, 4.4, 2, 0.8), color: col, pos: [0, 3.2, 0] },
+        ...(loco ? [{ geo: new THREE.CylinderGeometry(1.1, 1.3, 3, 10), color: 0x2b2622, pos: [2, 6.5, 0] }, { geo: new K.RoundedBoxGeometry(3, 3, 4.4, 2, 0.6), color: 0x2b2622, pos: [-2, 6.6, 0] }] : []),
+        ...[-2.2, 2.2].flatMap((wx) => [-2.4, 2.4].map((wz) => ({ geo: new THREE.CylinderGeometry(1.1, 1.1, 0.8, 12).rotateX(Math.PI / 2), color: 0x2b2622, pos: [wx, 1.1, wz] }))),
+      ]);
+      const m = new THREE.Mesh(car, K.paint(0xffffff, { vertexColors: true })); m.castShadow = true; m.userData.live = true; g.add(m);
+      this.train.cars.push(m);
+    });
+    bakeStatic(g);
   }
 
   buildPit(K) {
@@ -447,6 +509,12 @@ class PoleVault {
     }
     if (this.barFall && this.phase === 'ready') this.setBar(this.bar);
     this.crowd.update(tt, this.phase === 'air' ? 0.8 : this.phase === 'landed' ? 0.7 : 0.15);
+    if (!paused) {
+      // the train goes round and round; the rocking horse rocks a little
+      const tr = this.train, a0 = tt * 0.45;
+      tr.cars.forEach((m, k) => { const a = a0 - k * 0.42; m.position.set(tr.T0.x + Math.cos(a) * tr.T0.r, 0.6, tr.T0.z + Math.sin(a) * tr.T0.r); m.rotation.y = -a - Math.PI / 2 + Math.PI; });
+      this.horse.rotation.z = Math.sin(tt * 1.4) * 0.06;
+    }
     if (!paused) ctx.sound.setLoop('crowd', this.phase === 'air' ? 0.5 : 0.25);
     this.updateHud(tt);
     this.applyCamera(dt);
@@ -576,7 +644,7 @@ class PoleVault {
 export default {
   id: 'polevault', name: 'Pole vault', season: 'Summer',
   blurb: 'A bendy straw, a skewer bar on two rulers and a pillow to land on. The bar keeps going up.',
-  venue: 'The playroom floor: a masking-tape runway, a matchbox to plant in, rulers and clothes pegs holding the bar.',
+  venue: 'The playroom, on its foam puzzle floor: a masking-tape runway, a matchbox to plant in, rulers and clothes pegs holding the bar.',
   loading: 'Bending the straws…',
   how: [
     { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to run up: faster run, higher jump.' },

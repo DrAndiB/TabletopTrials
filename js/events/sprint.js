@@ -6,6 +6,7 @@ import { crowd, banner, letterBlock, crayon } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { fitRhythm, winFor, helped } from '../sizes.js';
 import { Particles } from '../fx.js';
+import { sunbeams, bakeStatic } from '../venues.js';
 import * as TX from '../textures.js';
 import { clamp, lerp, damp, rng, makeNoise2D } from '../util.js';
 
@@ -27,6 +28,8 @@ const BOT_PACE = { easy: { cad: 0.8, drive: 0.25, fatigue: 0.2 }, normal: { cad:
 const blockBoost = (reaction) => VMAX * 0.34 * clamp(1 - (reaction - 0.12) / 0.38, 0, 1);
 
 const laneZ = (lane) => (1.5 - lane) * LANE;
+const SUN = [0.5, 0.9, -0.5];          // towards the sun: up over the front door, behind the finish
+const DOOR = { x: FINISH + 56, w: 58, h: 122 };   // the front door in the hallway wall
 
 // Hurdles extends this class: the hooks it uses are onAction, afterMove, runnerPose, tipFor and botExtra.
 export class Sprint {
@@ -50,8 +53,9 @@ export class Sprint {
   async build() {
     const { kit: K, R, competitors } = this.ctx;
     const g = K.group;
+    // the hallway on a bright morning: the sun comes in through the glass over the front door
     R.setLighting({
-      sunDir: [-0.42, 1, 0.55], sunColor: 0xffe1bc, sunIntensity: 2.25,
+      sunDir: SUN, sunColor: 0xffe1bc, sunIntensity: 2.25,
       hemiSky: 0xfff1de, hemiGround: 0x6a4a33, hemiIntensity: 0.62,
       envIntensity: 0.5, exposure: 1.02, background: 0x2a2019, shadowRadius: 4,
     });
@@ -206,39 +210,40 @@ export class Sprint {
     K.contact(-16, 36, 7, 4.5, 0.35, 0.2);
   }
 
-  cardboardTexture(K, seed, label) {
+  // a shoebox front: its colour, a lid band, the brand and a little shoe
+  shoeboxTexture(K, seed, label, body, lid) {
     const c = K.TX.makeCanvas(512, 256), g = c.getContext('2d');
     const r = rng(seed);
-    g.fillStyle = '#c69a62'; g.fillRect(0, 0, 512, 256);
-    const n = makeNoise2D(seed);
-    const img = g.getImageData(0, 0, 512, 256), d = img.data;
-    for (let y = 0; y < 256; y++) for (let x = 0; x < 512; x++) {
-      const k = (y * 512 + x) * 4;
-      const v = 0.9 + 0.1 * Math.sin(x * 0.55) * 0.5 + (n.fbm(x / 64, y / 64, 3, 8) - 0.5) * 0.18;
-      d[k] *= v; d[k + 1] *= v; d[k + 2] *= v;
-    }
-    g.putImageData(img, 0, 0);
-    // packing tape across the top and a marker label
-    g.fillStyle = 'rgba(214,170,104,0.85)'; g.fillRect(0, 10, 512, 34);
-    g.fillStyle = 'rgba(255,255,255,0.18)'; g.fillRect(0, 14, 512, 5);
-    g.fillStyle = '#2b2622'; g.font = '44px "Lilita One", Impact, sans-serif'; g.textAlign = 'center';
-    g.save(); g.translate(256 + (r() - 0.5) * 80, 160); g.rotate((r() - 0.5) * 0.12); g.fillText(label, 0, 0); g.restore();
-    g.strokeStyle = '#2b2622'; g.lineWidth = 6; g.lineCap = 'round';
-    const ax = 60 + r() * 30;
-    g.beginPath(); g.moveTo(ax, 220); g.lineTo(ax, 175); g.moveTo(ax - 14, 190); g.lineTo(ax, 175); g.lineTo(ax + 14, 190); g.stroke();
+    g.fillStyle = body; g.fillRect(0, 0, 512, 256);
+    g.fillStyle = lid; g.fillRect(0, 0, 512, 46);
+    g.fillStyle = 'rgba(0,0,0,0.12)'; g.fillRect(0, 46, 512, 6);
+    const ink = ['#2b2b30', '#a5683a'].includes(body) ? '#f7f2e8' : '#2b2622';
+    g.fillStyle = ink; g.font = '58px "Lilita One", Impact, sans-serif'; g.textAlign = 'center';
+    g.fillText(label, 300, 172);
+    // a trainer in profile
+    g.save(); g.translate(92 + r() * 10, 150); g.scale(1.25, 1.25);
+    g.fillStyle = lid; g.strokeStyle = ink; g.lineWidth = 4;
+    g.beginPath(); g.moveTo(-40, 20); g.lineTo(-40, -6); g.quadraticCurveTo(-36, -24, -18, -24); g.lineTo(-6, -8); g.quadraticCurveTo(24, -6, 40, 8); g.lineTo(40, 20); g.closePath(); g.fill(); g.stroke();
+    g.fillStyle = ink; g.fillRect(-42, 16, 84, 6);
+    for (let k = 0; k < 3; k++) { g.beginPath(); g.moveTo(-22 + k * 7, -18 + k * 3); g.lineTo(-12 + k * 7, -16 + k * 3); g.stroke(); }
+    g.restore();
     return K.TX.toTexture(c, { wrap: false });
   }
 
   buildStands(K, competitors) {
     const g = K.group;
-    const labels = ['TOYS', 'BLOCKS', 'BOOKS', 'DRESS UP', 'PUZZLES', 'CARS'];
-    const mats = labels.map((l, i) => new THREE.MeshStandardMaterial({ map: this.cardboardTexture(K, 50 + i, l), roughness: 0.92 }));
-    const plain = new THREE.MeshStandardMaterial({ color: 0xbf9259, roughness: 0.95 });
+    // the stands: shoeboxes from the hall cupboard, each with its lid on
+    const BOXES = [['RUN', '#e9e4da', '#d9472b'], ['KICKS', '#2f6fe0', '#f2c230'], ['SIZE 34', '#f6a33a', '#2b2622'], ['SLIPPERS', '#f2a7c0', '#ffffff'], ['WELLIES', '#2fae5a', '#f7f2e8'], ['ZOOM', '#2b2b30', '#7be495'], ['SANDALS', '#7fd0e6', '#ef7d2c'], ['BOOTS', '#a5683a', '#f2e3c4']];
+    const boxMats = BOXES.map(([l, body, lid], i) => {
+      const side = new THREE.MeshStandardMaterial({ color: body, roughness: 0.75 });
+      return { side, top: new THREE.MeshStandardMaterial({ color: lid, roughness: 0.7 }), front: new THREE.MeshStandardMaterial({ map: this.shoeboxTexture(K, 50 + i, l, body, lid), roughness: 0.75 }) };
+    });
     const spots = [];
     const addBox = (x0, x1, z, d, h, mi) => {
       const w = x1 - x0;
       const geo = new THREE.BoxGeometry(w, h, d);
-      const m = new THREE.Mesh(geo, [plain, plain, plain, plain, mats[mi % mats.length], plain]);
+      const bm = boxMats[mi % boxMats.length];
+      const m = new THREE.Mesh(geo, [bm.side, bm.side, bm.top, bm.side, bm.front, bm.side]);
       m.position.set((x0 + x1) / 2, h / 2, z);
       m.castShadow = true; m.receiveShadow = true;
       g.add(m);
@@ -277,36 +282,101 @@ export class Sprint {
     });
   }
 
-  // the wall behind the stands: skirting board, wallpaper and pinned crayon drawings
+  // the hallway wall behind the stands: striped wallpaper over white panelling, coats on hooks, wellies
+  // and trainers along the skirting, a radiator, the kids' drawings, and the front door by the finish
   buildWall(K) {
-    const g = K.group;
-    const wc = K.TX.makeCanvas(512, 512), w = wc.getContext('2d');
-    w.fillStyle = '#f3e3c3'; w.fillRect(0, 0, 512, 512);
-    for (let i = 0; i < 8; i++) { w.fillStyle = i % 2 ? 'rgba(226,191,140,0.35)' : 'rgba(255,255,255,0.25)'; w.fillRect(i * 64, 0, 32, 512); }
-    const r = rng(9);
-    for (let i = 0; i < 40; i++) { w.fillStyle = ['#e9a59a', '#9bc3e6', '#f2cf6b', '#9fd3a5'][i % 4]; const x = r() * 512, y = r() * 512; w.beginPath(); w.arc(x, y, 6, 0, Math.PI * 2); w.fill(); }
-    const tex = K.TX.toTexture(wc, { repeat: [7, 1.2] });
-    const wall = new THREE.Mesh(new THREE.PlaneGeometry(1000, 170), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }));
-    wall.position.set(160, 85, -86);
-    wall.receiveShadow = true;
-    g.add(wall);
-    const skirt = new THREE.Mesh(new THREE.BoxGeometry(1000, 9, 2), K.paint(0xf7f2e8, { roughness: 0.4 }));
-    skirt.position.set(160, 4.5, -85);
-    skirt.castShadow = true; skirt.receiveShadow = true;
-    g.add(skirt);
-    // crayon drawings on paper, held by bits of tape
+    const g = new THREE.Group(), ZW = -86;
+    K.group.add(g);
+    const wc = K.TX.makeCanvas(256, 256), w = wc.getContext('2d');
+    w.fillStyle = '#e8eedf'; w.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 4; i++) { w.fillStyle = '#c9d8bf'; w.fillRect(i * 64 + 8, 0, 22, 256); w.fillStyle = 'rgba(255,255,255,0.5)'; w.fillRect(i * 64 + 40, 0, 4, 256); }
+    for (let y = 16; y < 256; y += 48) for (let x = 0; x < 4; x++) { w.fillStyle = 'rgba(178,140,96,0.5)'; w.beginPath(); w.arc(x * 64 + 49, y + (x % 2) * 24, 3.5, 0, Math.PI * 2); w.fill(); }
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(1000, 170), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(wc, { repeat: [16, 2.6] }), roughness: 0.95 }));
+    wall.position.set(160, 85, ZW); wall.receiveShadow = true; g.add(wall);
+    // white panelling up to a dado rail, with raised panels
+    const white = K.paint(0xf7f2e8, { roughness: 0.45 });
+    const dado = new THREE.Mesh(new THREE.BoxGeometry(1000, 52, 1.2), white); dado.position.set(160, 26, ZW + 0.6); dado.receiveShadow = true; g.add(dado);
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(1000, 2.6, 2.6), white); rail.position.set(160, 53, ZW + 1.3); rail.castShadow = true; g.add(rail);
+    const panels = [];
+    for (let x = -330; x < 650; x += 44) { if (Math.abs(x - DOOR.x) < DOOR.w / 2 + 22) continue; panels.push({ x, y: 30, z: ZW + 1.5, sx: 34, sy: 32, sz: 1 }); }
+    K.instances(new K.RoundedBoxGeometry(1, 1, 1, 2, 0.15), white, panels, { cast: false });
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(1000, 9, 2.4), white);
+    skirt.position.set(160, 4.5, ZW + 2.2); skirt.castShadow = true; skirt.receiveShadow = true; g.add(skirt);
+    // the front door: green, four panels, a brass knob, letterbox and number, a glowing fanlight above
+    const door = new THREE.Group(); door.position.set(DOOR.x, 0, ZW + 1.4); g.add(door);
+    const frame = (bw, bh, bx, by) => { const m = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, 4), white); m.position.set(bx, by, 1); m.castShadow = true; door.add(m); };
+    frame(DOOR.w + 12, 6, 0, DOOR.h + 3 + 26); frame(6, DOOR.h + 32, -DOOR.w / 2 - 3, (DOOR.h + 32) / 2); frame(6, DOOR.h + 32, DOOR.w / 2 + 3, (DOOR.h + 32) / 2); frame(DOOR.w, 3, 0, DOOR.h + 1.5);
+    const green = K.paint(0x2f6b55, { clearcoat: 0.7 });
+    const leaf = new THREE.Mesh(new THREE.BoxGeometry(DOOR.w, DOOR.h, 2.4), green); leaf.position.set(0, DOOR.h / 2, 0.4); leaf.castShadow = true; leaf.receiveShadow = true; door.add(leaf);
+    for (const [px, py, ph] of [[-13, 92, 40], [13, 92, 40], [-13, 34, 46], [13, 34, 46]]) { const p = new THREE.Mesh(new K.RoundedBoxGeometry(22, ph, 1.6, 2, 0.5), green); p.position.set(px, py, 1.8); door.add(p); }
+    const brass = K.metal(0xd8b25e, 0.25);
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(2.2, 16, 12), brass); knob.position.set(DOOR.w / 2 - 7, 60, 3.4); door.add(knob);
+    const slot = new THREE.Mesh(new K.RoundedBoxGeometry(16, 3.6, 1.2, 2, 0.5), brass); slot.position.set(0, 66, 2.8); door.add(slot);
+    const nc = K.TX.makeCanvas(64), n2 = nc.getContext('2d'); n2.fillStyle = '#d8b25e'; n2.font = '56px "Lilita One", Impact, sans-serif'; n2.textAlign = 'center'; n2.fillText('7', 32, 54);
+    const num = new THREE.Mesh(new THREE.PlaneGeometry(7, 7), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(nc, { wrap: false }), transparent: true, metalness: 0.6, roughness: 0.3 })); num.position.set(0, 108, 2.3); door.add(num);
+    const fc = K.TX.makeCanvas(256, 128), f2 = fc.getContext('2d');
+    const sky = f2.createLinearGradient(0, 0, 0, 128); sky.addColorStop(0, '#9fd6f5'); sky.addColorStop(1, '#fff2d0');
+    f2.fillStyle = sky; f2.fillRect(0, 0, 256, 128);
+    f2.strokeStyle = '#f7f2e8'; f2.lineWidth = 7; for (let k = 1; k < 5; k++) { const a = Math.PI * (1 - k / 5); f2.beginPath(); f2.moveTo(128, 128); f2.lineTo(128 + Math.cos(a) * 140, 128 - Math.sin(a) * 140); f2.stroke(); }
+    const fan = new THREE.Mesh(new THREE.CircleGeometry(DOOR.w / 2, 32, 0, Math.PI), new THREE.MeshBasicMaterial({ map: K.TX.toTexture(fc, { wrap: false }) }));
+    fan.position.set(0, DOOR.h + 3, 0.6); door.add(fan);
+    const fanRim = new THREE.Mesh(new THREE.TorusGeometry(DOOR.w / 2 + 1.5, 1.6, 8, 32, Math.PI), white); fanRim.position.set(0, DOOR.h + 3, 1); door.add(fanRim);
+    this.beams = sunbeams(g, { from: [DOOR.x, DOOR.h + 14, ZW + 3], dir: SUN.map((v) => -v), length: 190, width: 16, n: 3, spread: 15, opacity: 0.11 });
+    // a doormat and a welly boot or two by the door
+    const mc = K.TX.makeCanvas(256, 128), m2 = mc.getContext('2d');
+    m2.fillStyle = '#b5874f'; m2.fillRect(0, 0, 256, 128); m2.strokeStyle = '#6e4a2a'; m2.lineWidth = 10; m2.strokeRect(10, 10, 236, 108);
+    m2.fillStyle = '#4a2f1a'; m2.font = '40px "Lilita One", Impact, sans-serif'; m2.textAlign = 'center'; m2.fillText('HELLO', 128, 80);
+    const mat = new THREE.Mesh(new K.RoundedBoxGeometry(50, 1.2, 26, 2, 0.5), [0, 1, 2, 3, 4, 5].map((k) => k === 2 ? K.std({ map: K.TX.toTexture(mc, { wrap: false }), roughness: 1 }) : K.std({ color: 0x8a6238, roughness: 1 })));
+    mat.position.set(DOOR.x, 0.6, ZW + 18); mat.receiveShadow = true; g.add(mat);
+    // coats and a scarf on a row of hooks
+    const hookRail = new THREE.Mesh(new K.RoundedBoxGeometry(120, 5, 2.4, 2, 0.8), K.std({ color: 0x9a6a42, roughness: 0.6 })); hookRail.position.set(90, 118, ZW + 1.4); hookRail.castShadow = true; g.add(hookRail);
+    const coatM = K.felt(0xffffff, { vertexColors: true });
+    const coat = (x, col, len, tilt) => {
+      const geo = K.merge([
+        { geo: new K.RoundedBoxGeometry(24, len, 7, 3, 3), color: col, pos: [0, -len / 2 - 2, 0] },
+        { geo: new K.RoundedBoxGeometry(7, len * 0.75, 6, 3, 2.6), color: col, pos: [-13, -len * 0.42 - 2, 0.6], rot: [0, 0, 0.12] },
+        { geo: new K.RoundedBoxGeometry(7, len * 0.75, 6, 3, 2.6), color: col, pos: [13, -len * 0.42 - 2, 0.6], rot: [0, 0, -0.12] },
+        { geo: new THREE.SphereGeometry(7, 14, 10).scale(1.1, 0.8, 0.7), color: col, pos: [0, 0, 1.5] },
+        { geo: new THREE.CylinderGeometry(0.7, 0.7, 4, 6), color: 0xf2e3c4, pos: [0, -len * 0.3, 3.8], rot: [Math.PI / 2, 0, 0] },
+        { geo: new THREE.CylinderGeometry(0.7, 0.7, 4, 6), color: 0xf2e3c4, pos: [0, -len * 0.55, 3.8], rot: [Math.PI / 2, 0, 0] },
+      ]);
+      const m = new THREE.Mesh(geo, coatM);
+      m.position.set(x, 116, ZW + 5); m.rotation.z = tilt; m.castShadow = true; m.receiveShadow = true; g.add(m);
+    };
+    coat(52, 0xf2c230, 50, 0.04); coat(92, 0x2f4f7a, 58, -0.03); coat(130, 0xd9472b, 46, 0.06);
+    const sc = K.TX.makeCanvas(32, 128), s2 = sc.getContext('2d');
+    for (let y = 0; y < 128; y += 16) { s2.fillStyle = (y / 16) % 2 ? '#f7f2e8' : '#7a3fb0'; s2.fillRect(0, y, 32, 16); }
+    const scarf = new THREE.Mesh(new K.RoundedBoxGeometry(6, 60, 1.6, 2, 0.6), K.felt(0xffffff, { map: K.TX.toTexture(sc, { wrap: false }) }));
+    scarf.position.set(72, 88, ZW + 4); scarf.rotation.z = 0.05; scarf.castShadow = true; g.add(scarf);
+    // wellies and trainers along the skirting
+    const wellyM = K.plastic(0xffffff, 0.35, { vertexColors: true });
+    const welly = (x, col, ry) => {
+      const geo = K.merge([
+        { geo: new THREE.CylinderGeometry(5.6, 5, 24, 20), color: col, pos: [0, 15, 0] },
+        { geo: new K.RoundedBoxGeometry(18, 7, 11, 3, 3), color: col, pos: [4, 3.5, 0] },
+        { geo: new THREE.CylinderGeometry(5.9, 5.9, 2, 20), color: 0x2b2622, pos: [0, 26.5, 0] },
+      ]);
+      const m = new THREE.Mesh(geo, wellyM); m.position.set(x, 0, ZW + 12); m.rotation.y = ry; m.castShadow = true; g.add(m);
+    };
+    welly(40, 0x2fae5a, 0.3); welly(54, 0x2fae5a, 0.1); welly(118, 0xd9472b, -0.2); welly(131, 0xd9472b, 0.05);
+    // a radiator under the window-less wall, ribbed and white
+    const ribs = [];
+    for (let k = 0; k < 16; k++) ribs.push({ x: 196 + k * 3.4, y: 26, z: ZW + 5, sx: 2.6, sy: 34, sz: 5 });
+    K.instances(new K.RoundedBoxGeometry(1, 1, 1, 2, 0.3), white, ribs);
+    // the kids' drawings, framed now, along the wall
     const kinds = ['sun', 'house', 'runner', 'rainbow', 'cat', 'flower'];
-    kinds.forEach((kind, i) => {
+    const r = rng(9), frameMats = [0x2b2622, 0xd8b25e, 0xf7f2e8].map((c) => K.paint(c));
+    [-150, -70, 10, 190, 250, 450].forEach((x, i) => {
       const pc = K.TX.makeCanvas(256, 200), p = pc.getContext('2d');
       p.fillStyle = '#fbf8f1'; p.fillRect(0, 0, 256, 200);
-      drawCrayon(p, kind, rng(70 + i));
-      p.fillStyle = 'rgba(240,220,170,0.75)'; p.fillRect(100, 0, 56, 14);
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(26, 20), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(pc, { wrap: false }), roughness: 0.9 }));
-      m.position.set(-40 + i * 78 + r() * 10, 38 + r() * 20, -85.4);
-      m.rotation.z = (r() - 0.5) * 0.16;
-      m.receiveShadow = true;
-      g.add(m);
+      drawCrayon(p, kinds[i % kinds.length], rng(70 + i));
+      const y = 86 + r() * 12;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(24, 18.5), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(pc, { wrap: false }), roughness: 0.9 }));
+      m.position.set(x, y, ZW + 1.75); m.receiveShadow = true; g.add(m);
+      const fr = new THREE.Mesh(new THREE.BoxGeometry(28, 22.5, 1.2), frameMats[i % 3]);
+      fr.position.set(x, y, ZW + 1.0); fr.castShadow = true; g.add(fr);
     });
+    bakeStatic(g);
   }
 
   // big toys passing in front (they sit low on screen, blurred by the tilt-shift)
@@ -345,6 +415,15 @@ export class Sprint {
       const m = letterBlock(lb[i], 5.6, i + 3); m.position.set(x, y, z); m.rotation.y = ry; g.add(m);
     });
     K.contact(341, 42.5, 9, 6, 0.4);
+    // a robot vacuum on its rounds, along the front of the hall
+    const vac = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 3.4, 32), K.plastic(0x3a3d44, 0.4));
+    body.position.y = 1.9; body.castShadow = true; vac.add(body);
+    const top = new THREE.Mesh(new THREE.CylinderGeometry(7.6, 7.6, 0.5, 32), K.plastic(0x6b7280, 0.25)); top.position.y = 3.7; vac.add(top);
+    const bump = new THREE.Mesh(new THREE.TorusGeometry(9, 0.6, 6, 24, Math.PI), K.plastic(0x1f2126, 0.5)); bump.rotation.set(Math.PI / 2, 0, -Math.PI / 2); bump.position.y = 1.8; vac.add(bump);
+    this.vacLed = new THREE.Mesh(new THREE.SphereGeometry(0.6, 8, 6), new THREE.MeshBasicMaterial({ color: 0x7be495 })); this.vacLed.position.set(5, 4, 0); vac.add(this.vacLed);
+    g.add(vac);
+    this.vac = { g: vac, x: -40, dir: 1, turn: 0 };
     // crayons lying about and a sock
     [[120, -30, 0.4], [124, -28, 1.2], [205, 31, 2.4], [-35, -30, 2.0]].forEach(([x, z, ry], i) => { const c = crayon(i * 2 + 1); c.position.set(x, 0.45, z); c.rotation.y = ry; g.add(c); });
     void r;
@@ -682,7 +761,16 @@ export class Sprint {
   frame(dt, paused) {
     const ctx = this.ctx;
     const tt = ctx.time();
-    if (!paused) this.particles.update(dt);
+    if (!paused) {
+      this.particles.update(dt);
+      this.beams.update(tt);
+      // the robot vacuum potters along the front of the hall and turns round at each end
+      const v = this.vac;
+      if (v.turn > 0) { v.turn -= dt; v.g.rotation.y += (v.dir > 0 ? -1 : 1) * Math.PI * dt; if (v.turn <= 0) v.g.rotation.y = v.dir > 0 ? 0 : Math.PI; }
+      else { v.x += v.dir * 11 * dt; if (v.x > 410 || v.x < -60) { v.dir *= -1; v.turn = 1; } }
+      v.g.position.set(v.x, 0, 66 + Math.sin(v.x * 0.03) * 4);
+      this.vacLed.visible = Math.sin(tt * 4) > -0.3;
+    }
     const replaying = this.phase === 'replay' && this.replay;
     let snap = null;
     if (replaying) snap = this.sample(this.replay.t);
@@ -877,7 +965,7 @@ function drawCrayon(p, kind, r) {
 export default {
   id: 'sprint', name: 'Sprint', season: 'Summer',
   blurb: 'Four lanes chalked on the playroom floor: react to the whistle, then run with a steady rhythm.',
-  venue: 'Four lanes chalked across the playroom floorboards, finishing at a red wool tape.',
+  venue: 'The front hall: four lanes chalked along the floorboards towards the front door, finishing at a red wool tape.',
   loading: 'Chalking the lanes…',
   how: [
     { verb: 'Timing', text: 'In the blocks, hold <b>action</b>. Let go the moment the <b>whistle</b> blows for a flying start: letting go after <b>Set</b> is a false start.' },

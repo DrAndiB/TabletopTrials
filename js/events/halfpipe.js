@@ -4,11 +4,12 @@
 // and hold ACTION to grab. Land with the spin finished and the grab let go. Two runs, the better counts.
 import * as THREE from '../../vendor/three.bundle.js';
 import { Figurine, POSES, REST, blendPose } from '../figurine.js';
-import { crowd, banner } from '../props.js';
+import { banner } from '../props.js';
 import { Particles } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
 import { winFor, helped } from '../sizes.js';
 import { hudKit, Card, Guide, Tags, Skipper } from './common.js';
+import { robotCrowd, glowTexture } from '../venues.js';
 
 const FB = 14, RP = 22, VW = 4;       // flat bottom width, transition radius, vertical wall above it
 const H = RP + VW;                    // lip height
@@ -49,10 +50,11 @@ class Halfpipe {
 
   async build() {
     const { kit: K, R, competitors } = this.ctx;
+    // the garage on a winter evening: cool strip lights overhead, snow blowing past the door
     R.setLighting({
-      sunDir: [0.3, 1, 0.5], sunColor: 0xfff4e6, sunIntensity: 2.0,
-      hemiSky: 0xeef4ff, hemiGround: 0x7a6a5a, hemiIntensity: 0.72,
-      envIntensity: 0.65, exposure: 0.97, background: 0x2a2624, shadowRadius: 4,
+      sunDir: [0.15, 1, 0.25], sunColor: 0xf2f6ff, sunIntensity: 2.1,
+      hemiSky: 0xd6e2f2, hemiGround: 0x4a4440, hemiIntensity: 0.62,
+      envIntensity: 0.5, exposure: 0.98, background: 0x15181e, shadowRadius: 3,
     });
     this.noise = makeNoise2D(29);
     this.buildRoom(K);
@@ -90,15 +92,67 @@ class Halfpipe {
 
   buildRoom(K) {
     const g = K.group;
-    const fc = K.TX.makeCanvas(256), f = fc.getContext('2d');
-    f.fillStyle = '#9aa7b8'; f.fillRect(0, 0, 256, 256);
-    for (let k = 0; k < 3000; k++) { f.fillStyle = `rgba(${200 + Math.random() * 55},${200 + Math.random() * 55},255,0.12)`; f.fillRect(Math.random() * 256, Math.random() * 256, 2, 2); }
-    const carpet = new THREE.Mesh(new THREE.PlaneGeometry(800, 600).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(fc, { repeat: [20, 15] }), roughness: 1 }));
-    carpet.position.set(LEN / 2, 0, 0); carpet.receiveShadow = true; g.add(carpet);
-    const wall = new THREE.Mesh(new THREE.PlaneGeometry(800, 260), K.std({ color: 0xe8dccb, roughness: 0.95 }));
-    wall.position.set(LEN / 2, 130, -160); g.add(wall);
-    const wall2 = new THREE.Mesh(new THREE.PlaneGeometry(600, 260), K.std({ color: 0xdfd2bf, roughness: 0.95 }));
+    // a grey concrete floor with an oil stain, a painted parking line, pegboard on the back wall
+    const fc = K.TX.makeCanvas(512), f = fc.getContext('2d');
+    f.fillStyle = '#8f9196'; f.fillRect(0, 0, 512, 512);
+    const img = f.getImageData(0, 0, 512, 512), d = img.data;
+    for (let y = 0; y < 512; y++) for (let x = 0; x < 512; x++) { const k = (y * 512 + x) * 4, v = 0.88 + 0.12 * this.noise.noise(x * 0.04, y * 0.04) + (Math.random() - 0.5) * 0.06; d[k] *= v; d[k + 1] *= v; d[k + 2] *= v; }
+    f.putImageData(img, 0, 0);
+    f.strokeStyle = 'rgba(60,60,64,0.6)'; f.lineWidth = 2; f.beginPath(); f.moveTo(256, 0); f.lineTo(256, 512); f.moveTo(0, 256); f.lineTo(512, 256); f.stroke();
+    const conc = new THREE.Mesh(new THREE.PlaneGeometry(800, 600).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(fc, { repeat: [4, 3] }), roughness: 0.85 }));
+    conc.position.set(LEN / 2, 0, 0); conc.receiveShadow = true; g.add(conc);
+    const stain = new THREE.Mesh(new THREE.CircleGeometry(22, 32).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x3a3c40, roughness: 0.25, transparent: true, opacity: 0.45, polygonOffset: true, polygonOffsetFactor: -2 }));
+    stain.position.set(LEN + 50, 0.1, 60); stain.scale.set(1.4, 1, 0.8); g.add(stain);
+    const line = new THREE.Mesh(new THREE.PlaneGeometry(600, 4).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xf2c230, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -2 }));
+    line.position.set(LEN / 2, 0.1, 80); g.add(line);
+    // the back wall: pegboard with tools hung on it
+    const pc = K.TX.makeCanvas(256), p2 = pc.getContext('2d');
+    p2.fillStyle = '#c49a6c'; p2.fillRect(0, 0, 256, 256); p2.fillStyle = '#5e4630';
+    for (let y = 8; y < 256; y += 16) for (let x = 8; x < 256; x += 16) { p2.beginPath(); p2.arc(x, y, 2.4, 0, TAU); p2.fill(); }
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(800, 260), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(pc, { repeat: [24, 8] }), roughness: 0.9 }));
+    wall.position.set(LEN / 2, 130, -160); wall.receiveShadow = true; g.add(wall);
+    const wall2 = new THREE.Mesh(new THREE.PlaneGeometry(600, 260), K.std({ color: 0xb8bcc2, roughness: 0.95 }));
     wall2.position.set(-60, 130, 0); wall2.rotation.y = Math.PI / 2; g.add(wall2);
+    const tool = (x, y, parts) => { const m = new THREE.Mesh(K.merge(parts), K.std({ vertexColors: true, roughness: 0.45, metalness: 0.4 })); m.position.set(x, y, -158); m.castShadow = true; g.add(m); };
+    const steel = 0xc8ccd2;
+    // hammer, spanners, saw, screwdrivers
+    tool(30, 120, [{ geo: new THREE.BoxGeometry(3, 30, 2), color: 0xb5473a }, { geo: new THREE.BoxGeometry(14, 5, 3), color: steel, pos: [0, 16, 0] }]);
+    for (let k = 0; k < 4; k++) tool(56 + k * 8, 112 + k * 2, [{ geo: new THREE.BoxGeometry(2.4, 22 + k * 4, 1), color: steel }, { geo: new THREE.TorusGeometry(2.4 + k * 0.3, 0.8, 6, 12), color: steel, pos: [0, 12 + k * 2, 0] }]);
+    tool(130, 116, [{ geo: new THREE.BoxGeometry(40, 12, 0.6), color: steel }, { geo: new THREE.BoxGeometry(10, 10, 2.4), color: 0x2f6fe0, pos: [24, 1, 0] }]);
+    for (let k = 0; k < 5; k++) tool(176 + k * 7, 118, [{ geo: new THREE.CylinderGeometry(1.4, 1.4, 9, 10), color: [0xd9472b, 0xf2c230, 0x2fae5a, 0x2f6fe0, 0x2b2622][k], pos: [0, 4, 0] }, { geo: new THREE.CylinderGeometry(0.4, 0.4, 12, 6), color: steel, pos: [0, -6, 0] }]);
+    // a workbench along the back with paint tins and a vice
+    const bench = new THREE.Mesh(new THREE.BoxGeometry(180, 4, 36), K.std({ color: 0xa47b5a, roughness: 0.7 })); bench.position.set(110, 50, -140); bench.castShadow = true; bench.receiveShadow = true; g.add(bench);
+    for (const x of [26, 194]) for (const z of [-154, -126]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(4, 48, 4), K.std({ color: 0x7a5a3e })); leg.position.set(x, 24, z); g.add(leg); }
+    [[0xd9472b, 60], [0x2f6fe0, 74], [0xf2c230, 88], [0xf7f2e8, 160]].forEach(([col, x], k) => {
+      const tin = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 9, 20), K.metal(0xc8ccd2, 0.35)); tin.position.set(x, 56.5, -136 + (k % 2) * 6); tin.castShadow = true; g.add(tin);
+      const lab = new THREE.Mesh(new THREE.CylinderGeometry(5.05, 5.05, 5, 20, 1, true), K.paint(col)); lab.position.copy(tin.position); g.add(lab);
+      const drip = new THREE.Mesh(new THREE.SphereGeometry(5.05, 16, 6, 0, TAU, 0, 0.5), K.paint(col)); drip.position.set(x, 61, tin.position.z); g.add(drip);
+    });
+    // the garage door on the right, open a crack, snow blowing in under it and the evening outside
+    const dc = K.TX.makeCanvas(256), d2 = dc.getContext('2d');
+    d2.fillStyle = '#e9ebee'; d2.fillRect(0, 0, 256, 256); d2.fillStyle = 'rgba(0,0,0,0.12)'; for (let y = 0; y < 256; y += 32) d2.fillRect(0, y, 256, 4);
+    const door = new THREE.Mesh(new THREE.PlaneGeometry(300, 150), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(dc, { repeat: [1, 1] }), roughness: 0.6, metalness: 0.3 }));
+    door.position.set(LEN + 120, 102, 0); door.rotation.y = -Math.PI / 2; g.add(door);
+    const gap = new THREE.Mesh(new THREE.PlaneGeometry(300, 27), new THREE.MeshBasicMaterial({ color: 0x24305a }));
+    gap.position.set(LEN + 120.2, 13.5, 0); gap.rotation.y = -Math.PI / 2; g.add(gap);
+    this.doorX = LEN + 116;
+    // two fluorescent strip lights hanging over the pipe
+    this.strips = [];
+    for (const x of [LEN * 0.3, LEN * 0.7]) {
+      const housing = new THREE.Mesh(new K.RoundedBoxGeometry(80, 3, 8, 2, 1), K.paint(0xf7f2e8)); housing.position.set(x, 116, 0); g.add(housing);
+      const tube = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 76, 12).rotateZ(Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xf4f8ff })); tube.position.set(x, 113.4, 0); g.add(tube);
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xdfeaff, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending })); glow.position.set(x, 112, 0); glow.scale.set(110, 36, 1); g.add(glow);
+      for (const sx of [-30, 30]) { const ch = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 40, 4), K.metal(0x8a8e94, 0.4)); ch.position.set(x + sx, 136, 0); g.add(ch); }
+      this.strips.push({ tube, glow });
+    }
+    // a bike leaning on the side wall
+    const bike = new THREE.Group(); bike.position.set(-48, 0, -92); bike.rotation.y = Math.PI / 2 + 0.15; g.add(bike);
+    const red = K.paint(0xd9472b), blk = K.std({ color: 0x1f1a17, roughness: 0.6 });
+    for (const x of [-22, 22]) { const w = new THREE.Mesh(new THREE.TorusGeometry(14, 1.6, 8, 32), blk); w.position.set(x, 15.6, 0); w.castShadow = true; bike.add(w); const hub = new THREE.Mesh(new THREE.TorusGeometry(13, 0.25, 4, 24), K.metal(0xc8ccd2, 0.3)); hub.position.copy(w.position); bike.add(hub); }
+    const bar = (len, x, y, rz) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, len, 8), red); m.position.set(x, y, 0); m.rotation.z = rz; m.castShadow = true; bike.add(m); };
+    bar(30, 0, 28, Math.PI / 2); bar(24, -12, 22, -0.75); bar(26, 10, 22, 0.75); bar(18, -20, 22, 0.25);
+    const saddle = new THREE.Mesh(new K.RoundedBoxGeometry(9, 2, 4, 2, 0.8), blk); saddle.position.set(-16, 32, 0); bike.add(saddle);
+    const hb = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 16, 8).rotateX(Math.PI / 2), blk); hb.position.set(18, 36, 0); bike.add(hb);
   }
 
   buildPipe(K) {
@@ -158,7 +212,8 @@ class Halfpipe {
     const spots = [];
     for (let k = 0; k < 6; k++) spots.push({ x: 40 + k * 38, y: H + 0.6, z: (k % 2 ? 1 : -1) * (FB / 2 + RP + 15), ry: k % 2 ? Math.PI : 0, size: 10 + this.r() * 2 });
     for (let k = 0; k < 4; k++) spots.push({ x: LEN + 22, y: 0, z: -30 + k * 20, ry: -Math.PI / 2, size: 13 });
-    this.crowd = crowd(K.group, spots, 37);
+    // the crowd: tin robots and action figures, lights blinking on their heads
+    this.crowd = robotCrowd(K.group, spots, 37);
     [[LEN + 14, -50], [LEN + 14, 50]].forEach(([x, z], k) => {
       const b = banner(competitors[k % competitors.length].code, 16, { seed: 20 + k });
       b.position.set(x, 0, z); b.rotation.y = -Math.PI / 2;
@@ -400,6 +455,13 @@ class Halfpipe {
     });
     if (rd && this.rs && this.phase !== 'done') this.poseRider(rd, tt, dt, paused);
     this.crowd.update(tt, this.phase === 'ride' ? 0.5 + (this.rs?.air ? 0.3 : 0) : this.phase === 'ended' ? 0.7 : 0.15);
+    if (!paused) {
+      // a strip light that flickers now and then; snow blowing in under the door
+      const fl = Math.sin(tt * 0.7) > 0.96 && Math.sin(tt * 47) > 0 ? 0.35 : 1;
+      this.strips[1].glow.material.opacity = 0.5 * fl; this.strips[1].tube.material.color.setScalar(fl > 0.5 ? 1 : 0.6);
+      this.snowT = (this.snowT || 0) - dt;
+      if (this.snowT <= 0 && this.ctx.kit.quality.grass > 0.5) { this.snowT = 0.08; this.particles.emit(this.doorX, 2 + Math.random() * 10, (Math.random() - 0.5) * 200, { vx: -14, spread: 3, up: 1.5, color: 0xffffff, size: 0.7, life: 3, alpha: 0.85, grav: 2, grow: 1 }); }
+    }
     this.updateHud(tt);
     this.applyCamera(dt);
   }
@@ -515,7 +577,7 @@ class Halfpipe {
 export default {
   id: 'halfpipe', name: 'Halfpipe', season: 'Winter',
   blurb: 'A cardboard U dusted with icing sugar and a lolly-stick snowboard: pump, fly, spin and grab.',
-  venue: 'A big sheet of cardboard bent into a U between two walls of books, dusted with icing sugar.',
+  venue: 'The garage on a winter evening: a big sheet of cardboard bent into a U between two walls of books, dusted with icing sugar.',
   loading: 'Dusting the halfpipe with icing sugar…',
   how: [
     { verb: 'Timing', text: 'Tap <b>action</b> to drop in, then tap it each time you cross the <b>blue strip</b> at the bottom to pump: higher every time.' },

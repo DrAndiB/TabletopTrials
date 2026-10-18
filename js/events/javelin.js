@@ -7,10 +7,13 @@ import { crowd, banner, paintedFlagTexture } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles } from '../fx.js';
 import { fitRhythm, helped } from '../sizes.js';
-import { clamp, damp, rng, makeNoise2D } from '../util.js';
+import { paneWindow, daySky, sunbeams, sunPatch, Dog, bakeStatic } from '../venues.js';
+import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
 
 const LINE_X = 0;              // the foul line
 const RUN_X = -95;             // where the run-up starts
+const JSUN = [0.72, 0.47, -0.51];      // towards the afternoon sun, out of the window on the right
+const JWIN = { x: 300, y: 132, w: 80, h: 96 };
 const TARGET = 6.5, VMAX = 32, ACCEL = 1.9;
 const G = 30, DRAG = 0.0005;
 const M_PER_UNIT = 0.75;       // metres per cm of carpet
@@ -44,9 +47,10 @@ class Javelin {
   // ---------------------------------------------------------------- venue
   async build() {
     const { kit: K, R, competitors } = this.ctx;
+    // a Sunday afternoon in the living room: low sun through the big window, across the rug
     R.setLighting({
-      sunDir: [-0.35, 1, 0.6], sunColor: 0xffe6c8, sunIntensity: 2.15,
-      hemiSky: 0xfff3e2, hemiGround: 0x6a4a33, hemiIntensity: 0.62,
+      sunDir: JSUN, sunColor: 0xffd9a8, sunIntensity: 2.4,
+      hemiSky: 0xfff0dc, hemiGround: 0x6a4a33, hemiIntensity: 0.55,
       envIntensity: 0.5, exposure: 0.98, background: 0x2a2019, shadowRadius: 4,
     });
     this.noise = makeNoise2D(29);
@@ -98,7 +102,8 @@ class Javelin {
   }
 
   buildRoom(K) {
-    const g = K.group;
+    const g = new THREE.Group();
+    K.group.add(g);
     const T = K.TX.woodTextures({ size: 1024, planks: 4, base: 0xa47b5a, dark: 0x664a35, light: 0xc9a27e, seed: 61, ringFreq: 12, roughBase: 0.55, lacquer: 0.35, grainContrast: 0.8 });
     const geo = new THREE.PlaneGeometry(900, 420);
     geo.rotateX(-Math.PI / 2);
@@ -110,8 +115,9 @@ class Javelin {
     g.add(floor);
     // the wall behind, with a warm stripe wallpaper and a framed picture
     const wc = K.TX.makeCanvas(256, 256), w = wc.getContext('2d');
-    w.fillStyle = '#e9d8b8'; w.fillRect(0, 0, 256, 256);
-    w.fillStyle = '#dcc7a0'; for (let x = 0; x < 256; x += 32) w.fillRect(x, 0, 14, 256);
+    w.fillStyle = '#2f6b6b'; w.fillRect(0, 0, 256, 256);
+    w.fillStyle = 'rgba(255,255,255,0.05)'; for (let x = 0; x < 256; x += 32) w.fillRect(x, 0, 3, 256);
+    w.fillStyle = 'rgba(0,0,0,0.06)'; for (let x = 16; x < 256; x += 32) w.fillRect(x, 0, 2, 256);
     const wall = new THREE.Mesh(new THREE.PlaneGeometry(900, 260), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(wc, { repeat: [24, 7] }), roughness: 0.95 }));
     wall.position.set(60, 130, -150);
     wall.receiveShadow = true;
@@ -128,7 +134,7 @@ class Javelin {
       f.putImageData(img, 0, 0);
       return K.TX.toTexture(c, { repeat: [2, 2] });
     };
-    const sofaM = new THREE.MeshPhysicalMaterial({ map: fab('#c4655a', '#b75a50'), roughness: 0.85, sheen: 0.8, sheenRoughness: 0.5, sheenColor: 0xffd6c8 });
+    const sofaM = new THREE.MeshPhysicalMaterial({ map: fab('#d9a73a', '#c8962e'), roughness: 0.85, sheen: 0.9, sheenRoughness: 0.45, sheenColor: 0xfff0c0 });
     const rb = (w2, h, d, x, y, z, rad = 6) => { const m = new THREE.Mesh(new K.RoundedBoxGeometry(w2, h, d, 4, rad), sofaM); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; g.add(m); };
     const SX = 110, SZ = -118;
     rb(230, 26, 70, SX, 17, SZ); rb(105, 13, 54, SX - 56, 36, SZ + 6); rb(105, 13, 54, SX + 56, 36, SZ + 6);
@@ -144,6 +150,41 @@ class Javelin {
     lamp.position.set(-40, 0, -130);
     lamp.traverse((m) => { if (m.isMesh) m.castShadow = true; });
     g.add(lamp);
+    // the big window on the right with cream curtains, the sun pouring in across the rug
+    const ZW = -150;
+    this.win = paneWindow(g, { x: JWIN.x, y: JWIN.y, z: ZW + 0.2, w: JWIN.w, h: JWIN.h, sky: daySky(12), depth: 3.4 });
+    const cc = K.TX.makeCanvas(64, 256), c2 = cc.getContext('2d');
+    c2.fillStyle = '#f3e6cc'; c2.fillRect(0, 0, 64, 256); c2.fillStyle = 'rgba(180,140,90,0.25)'; for (let x = 4; x < 64; x += 16) c2.fillRect(x, 0, 5, 256);
+    const curtM = new THREE.MeshStandardMaterial({ map: K.TX.toTexture(cc, { repeat: [3, 1] }), roughness: 0.95, side: THREE.DoubleSide });
+    for (const sd of [-1, 1]) {
+      const geo = new THREE.PlaneGeometry(22, 150, 24, 1);
+      const pp = geo.attributes.position;
+      for (let i = 0; i < pp.count; i++) pp.setZ(i, Math.sin(pp.getX(i) * 0.75) * 1.6);
+      geo.computeVertexNormals();
+      const cu = new THREE.Mesh(geo, curtM); cu.position.set(JWIN.x + sd * (JWIN.w / 2 + 12), 112, ZW + 4); cu.castShadow = true; cu.receiveShadow = true; g.add(cu);
+    }
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, JWIN.w + 70, 10).rotateZ(Math.PI / 2), K.metal(0xd8b25e, 0.3)); rod.position.set(JWIN.x, 189, ZW + 4); g.add(rod);
+    const corners = [[JWIN.x - JWIN.w / 2, JWIN.y - JWIN.h / 2, ZW], [JWIN.x + JWIN.w / 2, JWIN.y - JWIN.h / 2, ZW], [JWIN.x + JWIN.w / 2, JWIN.y + JWIN.h / 2, ZW], [JWIN.x - JWIN.w / 2, JWIN.y + JWIN.h / 2, ZW]];
+    sunPatch(g, { corners, sun: JSUN, y: 1.25, opacity: 0.3 });
+    this.beams = sunbeams(g, { from: [JWIN.x, JWIN.y, ZW + 3], dir: JSUN.map((v) => -v), length: 230, width: 26, n: 3, spread: 22, opacity: 0.08 });
+    // a big cheese plant in the corner by the window
+    const pot = new THREE.Mesh(K.lathe([[0.01, 0], [9, 0], [11, 18], [12, 20], [0.01, 20]], 28), K.paint(0xf2efe8));
+    pot.position.set(372, 0, -128); pot.castShadow = true; g.add(pot);
+    const lc = K.TX.makeCanvas(128), l2 = lc.getContext('2d');
+    l2.fillStyle = '#3f8a4a'; l2.beginPath(); l2.ellipse(64, 64, 58, 60, 0, 0, TAU); l2.fill();
+    l2.globalCompositeOperation = 'destination-out';
+    for (let k = 0; k < 7; k++) { const a = -Math.PI / 2 + (k - 3) * 0.42; l2.beginPath(); l2.ellipse(64 + Math.cos(a) * 40, 64 + Math.sin(a) * 40, 16, 4, a, 0, TAU); l2.fill(); }
+    l2.globalCompositeOperation = 'source-over'; l2.strokeStyle = '#2d6a38'; l2.lineWidth = 3; l2.beginPath(); l2.moveTo(64, 124); l2.lineTo(64, 8); l2.stroke();
+    const stemM = K.std({ color: 0x4f8a3a });
+    const leafM = new THREE.MeshStandardMaterial({ map: K.TX.toTexture(lc, { wrap: false }), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.6 });
+    for (let k = 0; k < 9; k++) {
+      const a = (k / 9) * TAU, h = 34 + (k % 3) * 14, lean = 0.5 + (k % 2) * 0.25;
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, h, 6), stemM); stem.position.set(372 + Math.cos(a) * h * 0.18, 18 + h / 2, -128 + Math.sin(a) * h * 0.18); stem.rotation.set(Math.sin(a) * 0.35, 0, -Math.cos(a) * 0.35); g.add(stem);
+      const leaf = new THREE.Mesh(new THREE.PlaneGeometry(26, 26), leafM); leaf.position.set(372 + Math.cos(a) * h * 0.4, 18 + h, -128 + Math.sin(a) * h * 0.4); leaf.rotation.set(-Math.PI / 2 + lean, -a + Math.PI / 2, 0, 'YXZ'); leaf.castShadow = true; g.add(leaf);
+    }
+    // the dog, fast asleep on its bed by the lamp
+    this.dog = new Dog(g, { x: -62, z: -86, ry: -0.5, size: 34, coat: 0xc98a4b });
+    bakeStatic(g);
   }
 
   buildCarpet(K) {
@@ -486,7 +527,9 @@ class Javelin {
       t.pen.position.copy(h); t.pen.rotation.set(0, 0, Math.PI / 2 - 0.15);
     });
     if (th && this.phase !== 'done') this.poseThrower(th, tt, dt, paused);
-    this.crowd.update(tt, this.phase === 'flight' ? 0.8 : this.phase === 'landed' ? 0.6 : 0.15);
+    const exc = this.phase === 'flight' ? 0.8 : this.phase === 'landed' ? 0.6 : 0.15;
+    this.crowd.update(tt, exc);
+    if (!paused) { this.dog.update(tt, dt, exc); this.beams.update(tt); }
     if (!paused) ctx.sound.setLoop('crowd', this.phase === 'flight' ? 0.5 : 0.25);
     this.updateHud();
     this.applyCamera(dt);
@@ -572,7 +615,7 @@ class Javelin {
 export default {
   id: 'javelin', name: 'Javelin', season: 'Summer',
   blurb: 'A pencil javelin down the living-room carpet: three throws each, the longest counts.',
-  venue: 'The big rug in the living room, a runway of masking tape, a red foul line and a tape measure.',
+  venue: 'The living room on a sunny afternoon: the big rug, a runway of masking tape, a red foul line and a tape measure.',
   loading: 'Sharpening the javelins…',
   how: [
     { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to run up: faster run, longer throw.' },

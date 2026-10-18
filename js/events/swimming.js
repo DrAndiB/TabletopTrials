@@ -199,7 +199,7 @@ class Swimming {
     // the water: a glossy, rippling sheet
     const nf = K.TX.noiseField(256, { seed: 23, period: 32, oct: 3 });
     this.waterNormal = K.TX.toTexture(K.TX.normalFromHeight(nf, 256, 256, 1.6), { srgb: false, repeat: [5, 2] });
-    this.water = new THREE.Mesh(new THREE.PlaneGeometry(L, W, 1, 1).rotateX(-Math.PI / 2), new THREE.MeshPhysicalMaterial({ color: 0x56b4dc, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.42, normalMap: this.waterNormal, normalScale: new THREE.Vector2(0.35, 0.35), clearcoat: 1, clearcoatRoughness: 0.05, depthWrite: false }));
+    this.water = new THREE.Mesh(new THREE.PlaneGeometry(L, W, 1, 1).rotateX(-Math.PI / 2), new THREE.MeshPhysicalMaterial({ color: 0x56b4dc, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.42, normalMap: this.waterNormal, normalScale: new THREE.Vector2(0.35, 0.35), clearcoat: 1, clearcoatRoughness: 0.14, depthWrite: false }));
     this.water.position.set(L / 2, WY, 0); this.water.renderOrder = 2; g.add(this.water);
     const tint = new THREE.Mesh(new THREE.PlaneGeometry(L, W).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x2f94c4, transparent: true, opacity: 0.3, depthWrite: false }));
     tint.position.set(L / 2, (WY + FLOOR) / 2, 0); g.add(tint);
@@ -262,10 +262,16 @@ class Swimming {
   }
 
   buildCrowd(K, competitors) {
+    // a row of ducks along the back rim of the tub, facing the water, and a few more on the far end
     const spots = [];
-    for (let k = 0; k < 6; k++) spots.push({ x: 30 + k * 16 + (k > 2 ? 10 : 0), y: this.shelfY, z: -W / 2 - T + 3, ry: 0.1, size: 9 + this.r() * 2 });
+    for (let x = 12; x < L - 6; x += 10.5 + this.r() * 2) {
+      if (Math.abs(x - TURN_ZONE[0]) < 5) continue;   // leave room for the bunting pole
+      spots.push({ x, y: RIM, z: -W / 2 - T / 2 - 0.4, ry: -Math.PI / 2 + (this.r() - 0.5) * 0.5, size: 6 + this.r() * 1.4 });
+    }
+    for (const z of [-15, -3, 9]) spots.push({ x: L + T / 2, y: RIM, z, ry: Math.PI + (this.r() - 0.5) * 0.4, size: 7.5 });
+    // and a few bobbing in the bubbles along the back wall, out of the swimmers' way
+    for (let x = 22; x < L - 20; x += 24 + this.r() * 10) spots.push({ x, y: WY - 1.2, z: -W / 2 + 2.6, ry: -Math.PI / 2 + (this.r() - 0.5) * 1.2, size: 4.6 + this.r(), float: true });
     for (let k = 0; k < 4; k++) spots.push({ x: L + T + 22 + (k % 2) * 10, y: 0, z: -20 + k * 14, ry: -1.4, size: 12 });
-    for (let k = 0; k < 3; k++) spots.push({ x: -T - 20 - (k % 2) * 8, y: 0, z: -14 + k * 16, ry: 1.4, size: 11 });
     // the crowd: rubber ducks, mostly yellow, the odd pink, blue or green one
     this.crowd = duckCrowd(K.group, spots, 59);
     [[-T - 12, 34], [L + T + 14, 38]].forEach(([x, z], k) => {
@@ -573,7 +579,8 @@ class Swimming {
       let zc = 0;
       for (const s of focus) zc += s.z;
       zc /= focus.length;
-      want = { x: clamp(mid + 4, 26, L - 26), y: WY, z: zc * 0.75 + 2, yaw: 0.08, pitch: 0.78, width: clamp(hi - lo + 46, 66, 160) };
+      // the near lanes need a steeper look, or the near side of the tub hides the swimmer
+      want = { x: clamp(mid + 4, 26, L - 26), y: WY, z: zc * 0.6 + 1, yaw: 0.08, pitch: 0.78 + 0.24 * clamp(zc / (W / 2 - LANE_W / 2), 0, 1), width: clamp(hi - lo + 50, 74, 160) };
       if (ph === 'done') Object.assign(want, { x: 22, z: 4, width: 82, yaw: 0.45, pitch: 0.42 });
     }
     for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], 2.6, Math.min(dt, 0.1));

@@ -10,6 +10,7 @@ import { Particles } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
 import { hudKit, Card, Guide, Tags, Skipper } from './common.js';
 import { winFor, helped } from '../sizes.js';
+import { paneWindow, duskSky } from '../venues.js';
 
 const TOP = 58;                        // top of the book tower
 const BOARD_X0 = -4, BOARD_LEN = 26;   // the ruler: from its pivot under the top book to its tip
@@ -53,10 +54,11 @@ class Diving {
 
   async build() {
     const { kit: K, R, competitors } = this.ctx;
+    // a bedroom on a summer evening: the last of the sun low through the window, the desk lamp on
     R.setLighting({
-      sunDir: [-0.3, 1, 0.55], sunColor: 0xfff0dc, sunIntensity: 2.1,
-      hemiSky: 0xf2f4ff, hemiGround: 0x6a4a33, hemiIntensity: 0.65,
-      envIntensity: 0.7, exposure: 0.98, background: 0x2a2421, shadowRadius: 4,
+      sunDir: [-0.85, 0.5, 0.35], sunColor: 0xffa66a, sunIntensity: 1.9,
+      hemiSky: 0x8a86c8, hemiGround: 0x4a3428, hemiIntensity: 0.55,
+      envIntensity: 0.45, exposure: 1.04, background: 0x161a32, shadowRadius: 4,
     });
     this.noise = makeNoise2D(17);
     this.buildRoom(K);
@@ -81,15 +83,62 @@ class Diving {
   }
 
   buildRoom(K) {
-    const g = K.group;
+    const g = K.group, ZW = -130;
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(700, 400).rotateX(-Math.PI / 2), floorMaterial({ seed: 9, repeat: 6 }));
     floor.position.set(30, 0, -40); floor.receiveShadow = true; g.add(floor);
-    const wc = K.TX.makeCanvas(256), w = wc.getContext('2d');
-    w.fillStyle = '#d8e6ef'; w.fillRect(0, 0, 256, 256);
-    w.fillStyle = 'rgba(255,255,255,0.55)';
-    for (let k = 0; k < 40; k++) { const x = (k * 53) % 256, y = (k * 97) % 256; w.beginPath(); w.arc(x, y, 6 + (k % 3) * 3, 0, TAU); w.fill(); }
-    const wall = new THREE.Mesh(new THREE.PlaneGeometry(700, 260), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(wc, { repeat: [12, 5] }), roughness: 0.95 }));
-    wall.position.set(30, 130, -130); wall.receiveShadow = true; g.add(wall);
+    // night-blue wallpaper with glow-in-the-dark stars and moons
+    const wc = K.TX.makeCanvas(256), w = wc.getContext('2d'), ec = K.TX.makeCanvas(256), e = ec.getContext('2d');
+    w.fillStyle = '#34477c'; w.fillRect(0, 0, 256, 256); e.fillStyle = '#000'; e.fillRect(0, 0, 256, 256);
+    const star = (c, x, y, r) => { c.beginPath(); for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + (k * Math.PI) / 5, rr = k % 2 ? r * 0.45 : r; c.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); } c.closePath(); c.fill(); };
+    const sr = rng(4);
+    for (let k = 0; k < 22; k++) {
+      const x = sr() * 256, y = sr() * 256, r = 4 + sr() * 7;
+      w.fillStyle = '#e9f0b8'; e.fillStyle = '#b8d86a';
+      if (k % 7 === 0) { for (const c of [w, e]) { c.beginPath(); c.arc(x, y, r * 1.2, 0, TAU); c.fill(); } w.fillStyle = '#34477c'; e.fillStyle = '#000'; w.beginPath(); w.arc(x + r * 0.6, y - r * 0.3, r * 1.1, 0, TAU); w.fill(); e.beginPath(); e.arc(x + r * 0.6, y - r * 0.3, r * 1.1, 0, TAU); e.fill(); }
+      else { star(w, x, y, r); star(e, x, y, r); }
+    }
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(700, 260), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(wc, { repeat: [10, 4] }), emissiveMap: K.TX.toTexture(ec, { repeat: [10, 4] }), emissive: 0xffffff, emissiveIntensity: 0.55, roughness: 0.95 }));
+    wall.position.set(30, 130, ZW); wall.receiveShadow = true; g.add(wall);
+    // the window, the evening sky outside
+    this.win = paneWindow(g, { x: -78, y: 132, z: ZW + 0.2, w: 70, h: 62, sky: duskSky(7), depth: 3 });
+    // a poster of a diving dolphin over the bookcase
+    const pc = K.TX.makeCanvas(256, 320), p2 = pc.getContext('2d');
+    const sea = p2.createLinearGradient(0, 0, 0, 320); sea.addColorStop(0, '#7fd0f5'); sea.addColorStop(0.55, '#3b8fd6'); sea.addColorStop(1, '#1d4f9a');
+    p2.fillStyle = sea; p2.fillRect(0, 0, 256, 320);
+    p2.fillStyle = '#fff6dc'; p2.beginPath(); p2.arc(200, 60, 26, 0, TAU); p2.fill();
+    p2.fillStyle = 'rgba(255,255,255,0.7)'; for (let k = 0; k < 4; k++) { p2.fillRect(0, 200 + k * 24, 256, 3); }
+    p2.save(); p2.translate(128, 150); p2.rotate(-0.6); p2.fillStyle = '#5f7f9f';
+    p2.beginPath(); p2.ellipse(0, 0, 70, 22, 0, 0, TAU); p2.fill();
+    p2.beginPath(); p2.moveTo(-60, 0); p2.lineTo(-95, -22); p2.lineTo(-90, 0); p2.lineTo(-95, 22); p2.closePath(); p2.fill();
+    p2.beginPath(); p2.moveTo(-5, -18); p2.lineTo(10, -42); p2.lineTo(20, -16); p2.fill();
+    p2.beginPath(); p2.moveTo(60, -6); p2.lineTo(88, 0); p2.lineTo(60, 6); p2.fill();
+    p2.fillStyle = '#1f1a17'; p2.beginPath(); p2.arc(48, -6, 3, 0, TAU); p2.fill();
+    p2.restore();
+    p2.fillStyle = '#fff'; p2.font = '64px "Lilita One", Impact, sans-serif'; p2.textAlign = 'center'; p2.fillText('DIVE!', 128, 300);
+    const poster = new THREE.Mesh(new THREE.PlaneGeometry(36, 45), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(pc, { wrap: false }), roughness: 0.6 }));
+    poster.position.set(14, 96, ZW + 0.5); poster.rotation.z = 0.03; poster.receiveShadow = true; g.add(poster);
+    // a planet mobile turning slowly over the bowl
+    this.mobile = new THREE.Group(); this.mobile.position.set(BX - 8, 196, -46); g.add(this.mobile);
+    const thread = new THREE.MeshBasicMaterial({ color: 0xe8e2d4 });
+    const string = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 60, 4), thread); string.position.y = 30; this.mobile.add(string);
+    const planets = [[0xf2c230, 4.2, 0, true], [0x3d7bd9, 3.2, 1], [0xe2653a, 2.6, 2], [0x9fd1c4, 3.6, 3]];
+    planets.forEach(([col, r, k, ring]) => {
+      const a = (k / 4) * TAU, arm = 16, len = 14 + k * 5;
+      const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, arm, 6).rotateZ(Math.PI / 2), K.std({ color: 0xd9b48a }));
+      stick.position.set(Math.cos(a) * arm / 2, 0, Math.sin(a) * arm / 2); stick.rotation.y = -a; this.mobile.add(stick);
+      const th = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, len, 4), thread); th.position.set(Math.cos(a) * arm, -len / 2, Math.sin(a) * arm); this.mobile.add(th);
+      const pl = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 14), K.paint(col)); pl.position.set(Math.cos(a) * arm, -len - r, Math.sin(a) * arm); pl.castShadow = true; this.mobile.add(pl);
+      if (ring) { const rg = new THREE.Mesh(new THREE.TorusGeometry(r * 1.7, 0.5, 6, 32), K.paint(0xf7e3a8)); rg.rotation.x = 1.2; rg.position.copy(pl.position); this.mobile.add(rg); }
+    });
+    // the desk lamp on the bookcase, bent over towards the bowl
+    const lamp = new THREE.Group(); lamp.position.set(118, 30, -112); lamp.rotation.y = 2.5; g.add(lamp);
+    const red = K.paint(0xd9472b);
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(5, 6, 1.6, 24), red); base.position.y = 0.8; base.castShadow = true; lamp.add(base);
+    const arm1 = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 26, 8), K.metal(0xcfd3d8, 0.3)); arm1.position.set(0, 13, 4); arm1.rotation.x = 0.35; lamp.add(arm1);
+    const arm2 = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 22, 8), K.metal(0xcfd3d8, 0.3)); arm2.position.set(0, 26, 14); arm2.rotation.x = 1.25; lamp.add(arm2);
+    const shade = new THREE.Mesh(new THREE.ConeGeometry(6, 9, 24, 1, true), K.paint(0xd9472b, { side: THREE.DoubleSide })); shade.position.set(0, 27, 25); shade.rotation.x = -2.2; shade.castShadow = true; lamp.add(shade);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(2.6, 12, 10), new THREE.MeshBasicMaterial({ color: 0xfff1c8 })); bulb.position.set(0, 25.2, 26.8); lamp.add(bulb);
+    this.lamp = new THREE.PointLight(0xffc27a, 3200, 0, 2); this.lamp.position.set(0, 22, 30); lamp.add(this.lamp);
     // a low bookcase along the wall, full of books
     const wood = K.std({ color: 0xe9dcc4, roughness: 0.6 });
     const bc = new THREE.Mesh(new K.RoundedBoxGeometry(200, 30, 26, 2, 1), wood);
@@ -431,6 +480,7 @@ class Diving {
     }
     // the goldfish swims round and round
     const fa = tt * 0.7;
+    if (!paused) this.mobile.rotation.y += dt * 0.18;
     this.fish.position.set(BX + Math.cos(fa) * 7, 10 + Math.sin(tt * 1.3) * 2, Math.sin(fa) * 7);
     this.fish.rotation.set(0, -fa - Math.PI / 2 + Math.sin(tt * 6) * 0.15, 0);
     const d = this.cur, v = this.dv;
@@ -554,7 +604,7 @@ class Diving {
 export default {
   id: 'diving', name: 'Diving', season: 'Summer',
   blurb: 'Off a ruler on a tower of books into the goldfish bowl: bounce, spin, and in head first.',
-  venue: 'A tower of picture books with a ruler for a springboard, the goldfish bowl below and five plush judges.',
+  venue: 'A bedroom on a summer evening: a tower of picture books with a ruler for a springboard, the goldfish bowl below and five plush judges.',
   loading: 'Filling the fishbowl…',
   how: [
     { verb: 'Timing', text: 'Tap <b>action</b> to start bouncing, then tap as the ring closes and your feet touch the board. Three bounces: the third takes off, higher if they were on time.' },
