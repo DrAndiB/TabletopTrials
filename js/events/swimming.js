@@ -3,7 +3,8 @@
 // tap ACTION over the green tiles before the far end for a tumble turn.
 import * as THREE from '../../vendor/three.bundle.js';
 import { Figurine, POSES, REST, blendPose } from '../figurine.js';
-import { crowd, banner } from '../props.js';
+import { banner } from '../props.js';
+import { Caustics, sunbeams, paneWindow, daySky, duckCrowd } from '../venues.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { fitRhythm, winFor, helped } from '../sizes.js';
 import { Particles } from '../fx.js';
@@ -19,6 +20,8 @@ const BODY = 7.6;                      // head to toes, lying in the water
 const DRAIN = [0.06, 0.1];             // air used per second: resting, plus at full effort (a breath every ~6 s)
 const BREATH_T = 0.32;
 const M_PER_UNIT = 25 / L;             // the tub is a 25 m pool: two lengths make 50 m
+const SUN = [-0.42, 0.78, -0.62];      // towards the sun: high, behind the tub, through the window
+const WIN = { x: 58, y: 116, w: 66, h: 52 };   // the window in the back wall
 // computer swimmers: cadence share, breathe when air drops below, chance of a tumble turn
 const BOT = {
   easy: { cad: 0.8, air: [0.12, 0.08], turn: 0.35 },
@@ -51,10 +54,11 @@ class Swimming {
 
   async build() {
     const { kit: K, R, competitors } = this.ctx;
+    // a summer morning: low sun through the window behind the tub, cool light bouncing off the tiles
     R.setLighting({
-      sunDir: [0.25, 1, 0.45], sunColor: 0xfff6ea, sunIntensity: 2.1,
-      hemiSky: 0xeef6ff, hemiGround: 0x8a8a92, hemiIntensity: 0.75,
-      envIntensity: 0.8, exposure: 0.98, background: 0x2b3036, shadowRadius: 4,
+      sunDir: SUN, sunColor: 0xffe2b4, sunIntensity: 2.7,
+      hemiSky: 0xe4f6ff, hemiGround: 0xc8b49a, hemiIntensity: 0.72,
+      envIntensity: 0.75, exposure: 1.0, background: 0xcfeaf2, shadowRadius: 4,
     });
     this.noise = makeNoise2D(71);
     this.buildRoom(K);
@@ -88,38 +92,74 @@ class Swimming {
 
   buildRoom(K) {
     const g = K.group;
-    // tiled floor and walls
-    const tiles = (base, grout, n, stripe) => {
-      const c = K.TX.makeCanvas(256), f = c.getContext('2d');
-      f.fillStyle = grout; f.fillRect(0, 0, 256, 256);
-      const s = 256 / n;
-      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-        const v = 0.94 + 0.06 * this.noise.noise(x * 3.1, y * 2.7);
-        f.fillStyle = stripe && y === 1 ? stripe : base; f.globalAlpha = v; f.fillRect(x * s + 2, y * s + 2, s - 4, s - 4); f.globalAlpha = 1;
+    const ZW = -W / 2 - T - 2;   // the back wall
+    // a black-and-white chequered floor
+    const fc = K.TX.makeCanvas(256), f = fc.getContext('2d');
+    f.fillStyle = '#b9b4aa'; f.fillRect(0, 0, 256, 256);
+    for (let y = 0; y < 2; y++) for (let x = 0; x < 2; x++) {
+      f.fillStyle = (x + y) % 2 ? '#30353b' : '#f3efe6';
+      f.fillRect(x * 128 + 3, y * 128 + 3, 122, 122);
+    }
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(900, 500).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(fc, { repeat: [45, 25] }), roughness: 0.32 }));
+    floor.position.set(L / 2, 0, 60); floor.receiveShadow = true; g.add(floor);
+    // mint subway tiles, a band of deep teal ones, white above the band
+    const subway = (base, grout, rows = 8) => {
+      const c = K.TX.makeCanvas(256), t = c.getContext('2d');
+      t.fillStyle = grout; t.fillRect(0, 0, 256, 256);
+      const h = 256 / rows;
+      for (let y = 0; y < rows; y++) for (let x = -1; x < 4; x++) {
+        const v = 0.93 + 0.07 * this.noise.noise(x * 3.1 + y, y * 2.7);
+        t.globalAlpha = v; t.fillStyle = base;
+        t.fillRect(x * 64 + (y % 2) * 32 + 2, y * h + 2, 60, h - 4);
       }
+      t.globalAlpha = 1;
       return c;
     };
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(900, 500).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(tiles('#dfe7ea', '#9fb0b6', 4), { repeat: [60, 33] }), roughness: 0.35 }));
-    floor.position.set(L / 2, 0, 60); floor.receiveShadow = true; g.add(floor);
-    const wallTex = K.TX.toTexture(tiles('#f4f6f3', '#c9d2d1', 8, '#5aa7c8'), { repeat: [28, 5] });
-    const wall = new THREE.Mesh(new THREE.PlaneGeometry(900, 200), new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.25 }));
-    wall.position.set(L / 2, 100, -W / 2 - T - 2); wall.receiveShadow = true; g.add(wall);
-    // a fluffy bath mat in front of the tub
-    const mat = new THREE.Mesh(new K.RoundedBoxGeometry(70, 1.4, 34, 2, 0.6), K.felt(0x9fd1c4));
-    mat.position.set(L / 2, 0.7, W / 2 + T + 24); mat.receiveShadow = true; g.add(mat);
-    // a shelf on the wall with a mirror above, a towel hanging off a rail at the near end
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(900, 200), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(subway('#cdeee4', '#a6cfc3'), { repeat: [56, 6] }), roughness: 0.22 }));
+    wall.position.set(L / 2, 100, ZW); wall.receiveShadow = true; g.add(wall);
+    const band = new THREE.Mesh(new THREE.PlaneGeometry(900, 8), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(subway('#2f8f83', '#1f6a61', 2), { repeat: [56, 1] }), roughness: 0.2 }));
+    band.position.set(L / 2, RIM + 46, ZW + 0.1); g.add(band);
+    // the window, the sun streaming in, a fern and a toy sailing boat on the sill
+    this.win = paneWindow(g, { x: WIN.x, y: WIN.y, z: ZW + 0.2, w: WIN.w, h: WIN.h, sky: daySky(5), depth: 3.2 });
+    const pot = new THREE.Mesh(K.lathe([[0.01, 0], [3.2, 0], [4.2, 6], [4.6, 6.6], [0.01, 6.6]], 20), K.paint(0xd8724a));
+    pot.position.set(WIN.x - WIN.w / 2 + 9, this.win.sillY, ZW + 4); pot.castShadow = true; g.add(pot);
+    const leaves = [];
+    for (let k = 0; k < 11; k++) { const a = (k / 11) * TAU; leaves.push({ x: WIN.x - WIN.w / 2 + 9 + Math.cos(a) * 2.5, y: this.win.sillY + 9, z: ZW + 4 + Math.sin(a) * 2.5, ry: -a, rz: 0.75 + (k % 3) * 0.2, s: 1, color: [0x4f9a4a, 0x6cb35a, 0x3d7f3f][k % 3] }); }
+    K.instances(new THREE.SphereGeometry(1.4, 8, 6).scale(1, 5, 0.35).translate(0, 4, 0), K.std({ color: 0xffffff, roughness: 0.6 }), leaves, { colors: true });
+    const boat = K.merge([
+      { geo: new K.RoundedBoxGeometry(10, 2.6, 3.6, 2, 1), color: 0xe23b2e },
+      { geo: new THREE.CylinderGeometry(0.25, 0.25, 9, 6), color: 0xd9b48a, pos: [0, 5.5, 0] },
+      { geo: new THREE.ConeGeometry(3.4, 7, 3).scale(1, 1, 0.12), color: 0xf7f4ee, pos: [1.6, 6, 0] },
+    ]);
+    const b = new THREE.Mesh(boat, K.plastic(0xffffff, 0.35, { vertexColors: true }));
+    b.position.set(WIN.x + WIN.w / 2 - 10, this.win.sillY + 1.3, ZW + 4); b.rotation.y = 0.3; b.castShadow = true; g.add(b);
+    this.beams = sunbeams(g, { from: [WIN.x, WIN.y, ZW + 2], dir: SUN.map((v) => -v), length: 170, width: 15, n: 3, spread: 17, opacity: 0.16 });
+    // a striped towel on a rail by the far end, a shelf over the tub with a mirror above
     const shelf = new THREE.Mesh(new K.RoundedBoxGeometry(L + 40, 2, 12, 2, 0.6), K.std({ color: 0xf7f4ee, roughness: 0.4 }));
     shelf.position.set(L / 2, RIM + 30, -W / 2 - T + 4); shelf.castShadow = true; shelf.receiveShadow = true; g.add(shelf);
     this.shelfY = RIM + 31;
-    const towel = new THREE.Mesh(new K.RoundedBoxGeometry(26, 44, 2.5, 2, 1), K.felt(0xf2c4cf));
-    towel.position.set(-34, 46, -W / 2 - T + 1); towel.castShadow = true; g.add(towel);
-    const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 34, 10).rotateZ(Math.PI / 2), K.metal(0xd8dade, 0.2));
-    rail.position.set(-34, 68, -W / 2 - T + 2); g.add(rail);
+    const tc = K.TX.makeCanvas(64, 128), t2 = tc.getContext('2d');
+    for (let y = 0; y < 128; y += 16) { t2.fillStyle = (y / 16) % 2 ? '#fff6ea' : '#ef6f6c'; t2.fillRect(0, y, 64, 16); }
+    t2.fillStyle = '#f7c948'; t2.fillRect(0, 60, 64, 6);
+    const towel = new THREE.Mesh(new K.RoundedBoxGeometry(26, 48, 2.5, 2, 1), K.felt(0xffffff, { map: K.TX.toTexture(tc, { wrap: false }) }));
+    towel.position.set(L + 46, 46, -W / 2 - T + 1); towel.castShadow = true; g.add(towel);
+    const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 34, 10).rotateZ(Math.PI / 2), K.metal(0xd4aa5a, 0.25));
+    rail.position.set(L + 46, 70, -W / 2 - T + 2); g.add(rail);
+    // a round mirror with a brass rim over the shelf
+    const mc = K.TX.makeCanvas(128), m2 = mc.getContext('2d');
+    const mg = m2.createLinearGradient(0, 0, 128, 128);
+    mg.addColorStop(0, '#f4fbfd'); mg.addColorStop(0.5, '#bfdbe4'); mg.addColorStop(1, '#e6f2f4');
+    m2.fillStyle = mg; m2.fillRect(0, 0, 128, 128);
+    m2.strokeStyle = 'rgba(255,255,255,0.8)'; m2.lineWidth = 7; for (const o of [30, 52]) { m2.beginPath(); m2.moveTo(o, 128); m2.lineTo(o + 70, 0); m2.stroke(); }
+    const mirror = new THREE.Mesh(new THREE.CircleGeometry(16, 40), K.phys({ map: K.TX.toTexture(mc, { wrap: false }), metalness: 0.2, roughness: 0.08, clearcoat: 1 }));
+    mirror.position.set(118, RIM + 58, ZW + 0.4); g.add(mirror);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(16.4, 1, 10, 48), K.metal(0xd4aa5a, 0.25));
+    rim.position.copy(mirror.position); rim.position.z += 0.6; rim.castShadow = true; g.add(rim);
   }
 
   buildTub(K) {
     const g = K.group;
-    const enamel = K.phys({ color: 0xf8f6f1, roughness: 0.14, clearcoat: 1, clearcoatRoughness: 0.08 });
+    const enamel = K.phys({ color: 0xf8f6f1, roughness: 0.22, clearcoat: 0.8, clearcoatRoughness: 0.22 });
     const box = (w, h, d, x, y, z, m = enamel, rad = 2) => { const o = new THREE.Mesh(new K.RoundedBoxGeometry(w, h, d, 3, rad), m); o.position.set(x, y, z); o.castShadow = true; o.receiveShadow = true; g.add(o); return o; };
     const H = RIM - 4;
     box(L + 2 * T, H, T, L / 2, 4 + H / 2, -W / 2 - T / 2);
@@ -133,6 +173,15 @@ class Swimming {
       const f = new THREE.Mesh(new THREE.SphereGeometry(3.6, 18, 12), brass); f.position.set(x, 3.4, z); f.scale.set(1, 1.1, 1); f.castShadow = true; g.add(f);
       const leg = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 3, 4, 14), brass); leg.position.set(x, 6.5, z); g.add(leg);
     }
+    // painted outside: retro coral pink with a gold pinstripe under the white rim
+    const paint = K.paint(0xf29a92, { clearcoat: 0.8 }), gold = K.metal(0xd8b25e, 0.25);
+    const panel = (w, h, x, y, z, ry) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), paint); m.position.set(x, y, z); m.rotation.y = ry; m.receiveShadow = true; g.add(m); return m; };
+    const PH = H - 7, PY = 5 + PH / 2;
+    panel(L + 2 * T - 4, PH, L / 2, PY, W / 2 + T + 0.06, 0);
+    panel(L + 2 * T - 4, PH, L / 2, PY, -W / 2 - T - 0.06, Math.PI);
+    panel(W + 2 * T - 4, PH, -T - 0.06, PY, 0, -Math.PI / 2);
+    panel(W + 2 * T - 4, PH, L + T + 0.06, PY, 0, Math.PI / 2);
+    for (const z of [W / 2 + T + 0.2, -W / 2 - T - 0.2]) { const st = new THREE.Mesh(new THREE.BoxGeometry(L + 2 * T - 4, 0.7, 0.3), gold); st.position.set(L / 2, PY + PH / 2 - 1.6, z); g.add(st); }
     K.contact(L / 2, 0, L / 2 + 14, W / 2 + 10, 0.4);
     // the tub floor under the water: lane lines in blue tape, T-ends at the walls, green tiles before the far end
     const Y = FLOOR + 0.05;
@@ -154,6 +203,26 @@ class Swimming {
     this.water.position.set(L / 2, WY, 0); this.water.renderOrder = 2; g.add(this.water);
     const tint = new THREE.Mesh(new THREE.PlaneGeometry(L, W).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x2f94c4, transparent: true, opacity: 0.3, depthWrite: false }));
     tint.position.set(L / 2, (WY + FLOOR) / 2, 0); g.add(tint);
+    // sunlight rippling over the bottom of the tub
+    this.caustics = new Caustics(g, { x: L / 2, z: 0, w: L - 1, d: W - 1, y: FLOOR + 0.12, opacity: 0.5, scale: 22 });
+    // bubble-bath foam along the long sides, heaped up in the corners
+    this.foam = [];
+    const fr = rng(31);
+    for (const side of [-1, 1]) {
+      for (let x = 2; x < L - 2; x += 0.9 + fr() * 1.6) {
+        const corner = x < 14 || x > L - 14;
+        const n = corner ? 3 : fr() < 0.55 ? 1 : 2;
+        for (let k = 0; k < n; k++) {
+          const rr = (corner ? 0.9 : 0.45) + fr() * (corner ? 1.1 : 0.7);
+          this.foam.push({ x: x + (fr() - 0.5) * 1.5, y: WY + rr * 0.25 + k * 0.5, z: side * (W / 2 - rr * 0.7 - fr() * (corner ? 3 : 1.2)), r: rr, ph: fr() * TAU });
+        }
+      }
+    }
+    this.foamMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.3, clearcoat: 0.6, clearcoatRoughness: 0.3, iridescence: 0.7, iridescenceIOR: 1.3, transparent: true, opacity: 0.82 }), this.foam.length);
+    this.foamMesh.receiveShadow = true;
+    g.add(this.foamMesh);
+    this.m4 = new THREE.Matrix4(); this.fq = new THREE.Quaternion(); this.fv = new THREE.Vector3(); this.fs = new THREE.Vector3();
+    this.updateFoam(0);
     // lane ropes: beads on a string, floating
     const beads = [], cols = [0xe23b2e, 0xf6f2ea, 0x2f6fe0];
     for (let k = 1; k < 4; k++) {
@@ -180,18 +249,16 @@ class Swimming {
     // bottles, a cup of toothbrushes and rubber ducks along the back rim
     const bottle = (x, col, h) => { const m = new THREE.Mesh(K.lathe([[0.01, 0], [3, 0], [3.2, h * 0.75], [1.4, h], [1.2, h + 2], [0.01, h + 2]], 24), K.plastic(col, 0.25)); m.position.set(x, this.shelfY, -W / 2 - T + 4); m.castShadow = true; g.add(m); };
     bottle(10, 0x7bc6b0, 12); bottle(18, 0xf08aa3, 10); bottle(140, 0xffc93c, 13); bottle(148, 0x8a55c9, 9);
-    const duck = (x, y, z, ry, s = 1) => {
-      const geo = K.merge([
-        { geo: new THREE.SphereGeometry(2.4, 18, 12), color: 0xffd23a, scale: [1.2, 0.85, 1] },
-        { geo: new THREE.SphereGeometry(1.5, 16, 12), color: 0xffd23a, pos: [1.6, 2.2, 0] },
-        { geo: new THREE.ConeGeometry(0.6, 1.4, 10).rotateZ(-Math.PI / 2), color: 0xef7d2c, pos: [3.4, 2.0, 0] },
-        { geo: new THREE.SphereGeometry(0.25, 8, 6), color: 0x1f1a17, pos: [2.5, 2.7, 0.75] },
-        { geo: new THREE.SphereGeometry(0.25, 8, 6), color: 0x1f1a17, pos: [2.5, 2.7, -0.75] },
-      ]);
-      const m = new THREE.Mesh(geo, K.plastic(0xffffff, 0.25, { vertexColors: true })); m.position.set(x, y, z); m.rotation.y = ry; m.scale.setScalar(s); m.castShadow = true; g.add(m);
-      return m;
-    };
-    this.ducks = [duck(60, this.shelfY + 2, -W / 2 - T + 4, 0.4), duck(68, this.shelfY + 2, -W / 2 - T + 4, -0.3, 0.8), duck(L + T + 10, 2, 30, 2.4, 1.4)];
+  }
+
+  updateFoam(t) {
+    const { m4, fq, fv, fs } = this;
+    this.foam.forEach((b, i) => {
+      const k = 1 + 0.06 * Math.sin(t * 1.7 + b.ph);
+      fv.set(b.x, b.y + 0.15 * Math.sin(t * 1.1 + b.ph), b.z); fs.set(b.r * k, b.r * k * 0.92, b.r * k);
+      m4.compose(fv, fq, fs); this.foamMesh.setMatrixAt(i, m4);
+    });
+    this.foamMesh.instanceMatrix.needsUpdate = true;
   }
 
   buildCrowd(K, competitors) {
@@ -199,7 +266,8 @@ class Swimming {
     for (let k = 0; k < 6; k++) spots.push({ x: 30 + k * 16 + (k > 2 ? 10 : 0), y: this.shelfY, z: -W / 2 - T + 3, ry: 0.1, size: 9 + this.r() * 2 });
     for (let k = 0; k < 4; k++) spots.push({ x: L + T + 22 + (k % 2) * 10, y: 0, z: -20 + k * 14, ry: -1.4, size: 12 });
     for (let k = 0; k < 3; k++) spots.push({ x: -T - 20 - (k % 2) * 8, y: 0, z: -14 + k * 16, ry: 1.4, size: 11 });
-    this.crowd = crowd(K.group, spots, 59);
+    // the crowd: rubber ducks, mostly yellow, the odd pink, blue or green one
+    this.crowd = duckCrowd(K.group, spots, 59);
     [[-T - 12, 34], [L + T + 14, 38]].forEach(([x, z], k) => {
       const b = banner(competitors[k % competitors.length].code, 16, { seed: 90 + k });
       b.position.set(x, 0, z); b.rotation.y = k ? -0.8 : 0.8;
@@ -392,7 +460,11 @@ class Swimming {
       if (!s.finished && (!lead || this.progress(s) > this.progress(lead))) lead = s;
     }
     this.lead = lead;
-    this.ducks[2].position.y = 2 + Math.sin(tt * 2) * 0.3;
+    if (!paused) {
+      this.caustics.update(tt);
+      this.beams.update(tt);
+      this.updateFoam(tt);
+    }
     const exc = this.phase === 'race' ? 0.45 + 0.3 * clamp(this.progress(lead || this.swimmers[0]) / (2 * L) * 1.4 - 0.4, 0, 1) : this.phase === 'done' ? 0.55 : 0.15;
     this.crowd.update(tt, exc);
     if (!paused) ctx.sound.setLoop('crowd', 0.2 + exc * 0.4);

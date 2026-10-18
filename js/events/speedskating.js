@@ -5,7 +5,8 @@
 // slows you down.
 import * as THREE from '../../vendor/three.bundle.js';
 import { Figurine, POSES, REST, blendPose } from '../figurine.js';
-import { crowd, banner } from '../props.js';
+import { banner } from '../props.js';
+import { paneWindow, nightSky, FairyLights, gingerCrowd, Cat } from '../venues.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { fitRhythm, winFor, helped } from '../sizes.js';
 import { Particles, SkidMarks } from '../fx.js';
@@ -53,10 +54,11 @@ class SpeedSkating {
 
   async build() {
     const { kit: K, R, competitors } = this.ctx;
+    // a winter night in the kitchen: moonlight through the window, warm lamps over the counter
     R.setLighting({
-      sunDir: [0.3, 1, 0.5], sunColor: 0xfff4e6, sunIntensity: 2.0,
-      hemiSky: 0xeef4ff, hemiGround: 0x7a6a5a, hemiIntensity: 0.7,
-      envIntensity: 0.85, exposure: 0.97, background: 0x2a2624, shadowRadius: 4,
+      sunDir: [-0.25, 0.9, -0.75], sunColor: 0x9db2ff, sunIntensity: 0.55,
+      hemiSky: 0x4a5a8a, hemiGround: 0x3a2618, hemiIntensity: 0.3,
+      envIntensity: 0.3, exposure: 1.04, background: 0x0c1020, shadowRadius: 5,
     });
     this.noise = makeNoise2D(83);
     this.buildKitchen(K);
@@ -87,28 +89,63 @@ class SpeedSkating {
 
   buildKitchen(K) {
     const g = K.group;
-    // the worktop: speckled stone, a wall of tiles, cupboards above
-    const T = K.TX.mottledTextures({ size: 512, a: 0xd9d4cc, b: 0xbdb6ab, c: 0xeeeae3, seed: 12, period: 10, speck: 0.4, bump: 1.5 });
-    for (const k of ['map', 'normalMap', 'roughnessMap']) if (T[k]) T[k].repeat.set(8, 3.4);
-    const top = new THREE.Mesh(new THREE.BoxGeometry(520, 6, 220), new THREE.MeshStandardMaterial({ ...T, roughness: 0.4 }));
+    const ZW = -128;   // the back wall
+    // a butcher-block worktop, oiled and warm
+    const T = K.TX.woodTextures({ size: 1024, planks: 12, base: 0xb98552, dark: 0x7a4e2a, light: 0xdcae78, seed: 41, ringFreq: 9, roughBase: 0.5, lacquer: 0.3, grainContrast: 0.7 });
+    for (const k of ['map', 'normalMap', 'roughnessMap']) if (T[k]) T[k].repeat.set(2.4, 1.2);
+    const top = new THREE.Mesh(new THREE.BoxGeometry(520, 6, 220), new THREE.MeshStandardMaterial({ ...T }));
     top.position.set(0, -3, -20); top.receiveShadow = true; g.add(top);
-    const tc = K.TX.makeCanvas(128), t2 = tc.getContext('2d');
-    t2.fillStyle = '#b8c7c2'; t2.fillRect(0, 0, 128, 128);
-    t2.fillStyle = '#e9efe9'; for (let y = 0; y < 2; y++) for (let x = 0; x < 4; x++) t2.fillRect(x * 32 + 1.5, y * 64 + 1.5, 29, 61);
-    const wall = new THREE.Mesh(new THREE.PlaneGeometry(520, 200), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(tc, { repeat: [20, 4] }), roughness: 0.3 }));
-    wall.position.set(0, 100, -128); wall.receiveShadow = true; g.add(wall);
-    // a rolling pin, a whisk, a bag of flour and a cooling rack
+    // a wall of bottle-green tiles with the window in the middle
+    const tc = K.TX.makeCanvas(256), t2 = tc.getContext('2d');
+    t2.fillStyle = '#16302a'; t2.fillRect(0, 0, 256, 256);
+    for (let y = 0; y < 8; y++) for (let x = -1; x < 4; x++) {
+      t2.globalAlpha = 0.9 + 0.1 * this.noise.noise(x * 2.3 + y, y * 3.1);
+      t2.fillStyle = '#2e5e50'; t2.fillRect(x * 64 + (y % 2) * 32 + 2, y * 32 + 2, 60, 28);
+    }
+    t2.globalAlpha = 1;
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(520, 200), new THREE.MeshStandardMaterial({ map: K.TX.toTexture(tc, { repeat: [26, 5] }), roughness: 0.18 }));
+    wall.position.set(0, 100, ZW); wall.receiveShadow = true; g.add(wall);
+    this.win = paneWindow(g, { x: 0, y: 82, z: ZW + 0.2, w: 124, h: 76, sky: nightSky(9), frame: 0xf2efe8, snow: K.quality.grass > 0.5 ? 70 : 0, depth: 3.4 });
+    // fairy lights along the top of the window
+    this.windowLights = new FairyLights(g, [[-70, 124, ZW + 4], [-24, 126, ZW + 4], [24, 126, ZW + 4], [70, 124, ZW + 4]], { sag: 5, per: 6, halo: 6, seed: 12 });
+    // a candle in a jar on the sill, flickering
+    const sill = this.win.sillY;
+    const jar = new THREE.Mesh(K.lathe([[0.01, 0], [3.4, 0], [3.6, 7], [3.2, 8], [0.01, 8]], 20), K.glass(0xfff0d0, 0.3));
+    jar.position.set(-44, sill, ZW + 4); g.add(jar);
+    const wax = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 3.2, 16), K.std({ color: 0xf6ead2, roughness: 0.7 }));
+    wax.position.set(-44, sill + 1.7, ZW + 4); g.add(wax);
+    this.flame = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8).scale(1, 2, 1), new THREE.MeshBasicMaterial({ color: 0xffc46a }));
+    this.flame.position.set(-44, sill + 4.6, ZW + 4); g.add(this.flame);
+    this.candle = new THREE.PointLight(0xff9a3c, 900, 0, 2);
+    this.candle.position.set(-44, sill + 6, ZW + 8); g.add(this.candle);
+    // the lamps over the counter (out of shot): two warm pools of light on the ice
+    this.lamps = [-48, 48].map((x) => { const l = new THREE.PointLight(0xffb866, 9000, 0, 2); l.position.set(x, 90, 14); g.add(l); return l; });
+    // a mug of cocoa with marshmallows, a jar of biscuits, the rolling pin and the flour
+    const mug = new THREE.Mesh(K.lathe([[0.01, 0], [5.4, 0], [5.8, 11], [5.2, 11], [5, 1], [0.01, 1]], 28), K.paint(0xe23b2e));
+    mug.position.set(-122, 0, -76); mug.castShadow = true; g.add(mug);
+    const handle = new THREE.Mesh(new THREE.TorusGeometry(3, 0.9, 8, 16, Math.PI), K.paint(0xe23b2e));
+    handle.position.set(-127.4, 6, -76); handle.rotation.z = Math.PI / 2; handle.castShadow = true; g.add(handle);
+    const cocoa = new THREE.Mesh(new THREE.CircleGeometry(5.2, 24).rotateX(-Math.PI / 2), K.std({ color: 0x5a3220, roughness: 0.35 }));
+    cocoa.position.set(-122, 9.6, -76); g.add(cocoa);
+    const mallows = [];
+    for (let k = 0; k < 5; k++) mallows.push({ x: -122 + Math.cos(k * 1.3) * 2.6, y: 10.3, z: -76 + Math.sin(k * 1.3) * 2.6, ry: k, s: 1, color: k % 2 ? 0xffffff : 0xffd7e2 });
+    K.instances(new K.RoundedBoxGeometry(1.8, 1.4, 1.8, 2, 0.4), K.std({ color: 0xffffff, roughness: 0.9 }), mallows, { colors: true });
+    const bj = new THREE.Mesh(K.lathe([[0.01, 0], [8, 0], [8.6, 3], [8.6, 20], [6, 22], [6, 24], [0.01, 24]], 32), K.glass(0xeaf4ff, 0.22));
+    bj.position.set(-150, 0, -98); g.add(bj);
+    const lid = new THREE.Mesh(new THREE.CylinderGeometry(6.6, 6.6, 2.4, 24), K.std({ color: 0xc89a62, roughness: 0.6 }));
+    lid.position.set(-150, 25, -98); lid.castShadow = true; g.add(lid);
+    const biscuits = [];
+    for (let k = 0; k < 7; k++) biscuits.push({ x: -150 + (k % 2 ? 2.5 : -2.5), y: 2 + k * 2.5, z: -98 + ((k * 7) % 3 - 1) * 2, rx: 1.3 + (k % 3) * 0.2, ry: k, s: 1, color: k % 3 ? 0xc98a4b : 0x7a4a2a });
+    K.instances(new THREE.CylinderGeometry(4.2, 4.2, 1.2, 18), K.std({ color: 0xffffff, roughness: 0.85 }), biscuits, { colors: true });
     const pin = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 40, 18).rotateZ(Math.PI / 2), K.std({ color: 0xd9b48a, roughness: 0.5 }));
-    pin.position.set(-110, 3, -70); pin.rotation.y = 0.3; pin.castShadow = true; g.add(pin);
-    for (const s of [-1, 1]) { const h = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 9, 12).rotateZ(Math.PI / 2), K.std({ color: 0xc89a62, roughness: 0.5 })); h.position.set(-110 + s * 23.5 * Math.cos(0.3), 3, -70 - s * 23.5 * Math.sin(0.3)); h.rotation.y = 0.3; g.add(h); }
+    pin.position.set(-112, 3, 70); pin.rotation.y = 0.3; pin.castShadow = true; g.add(pin);
+    for (const s2 of [-1, 1]) { const h = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 9, 12).rotateZ(Math.PI / 2), K.std({ color: 0xc89a62, roughness: 0.5 })); h.position.set(-112 + s2 * 23.5 * Math.cos(0.3), 3, 70 - s2 * 23.5 * Math.sin(0.3)); h.rotation.y = 0.3; g.add(h); }
     const flour = new THREE.Mesh(new K.RoundedBoxGeometry(18, 26, 12, 3, 2.5), K.std({ color: 0xf2ead8, roughness: 0.9 }));
-    flour.position.set(118, 13, -78); flour.rotation.y = -0.3; flour.castShadow = true; g.add(flour);
+    flour.position.set(150, 13, -96); flour.rotation.y = -0.3; flour.castShadow = true; g.add(flour);
     const band = new THREE.Mesh(new THREE.BoxGeometry(18.4, 7, 12.4), K.std({ color: 0x3d7bd9, roughness: 0.8 }));
-    band.position.set(118, 11, -78); band.rotation.y = -0.3; g.add(band);
-    const rack = [];
-    for (let k = 0; k < 9; k++) rack.push({ x: 100, y: 1.5, z: 50 + k * 4, sx: 40, sy: 0.5, sz: 0.5 });
-    for (let k = 0; k < 6; k++) rack.push({ x: 82 + k * 7.2, y: 1.5, z: 66, sx: 0.5, sy: 0.5, sz: 34 });
-    K.instances(new THREE.BoxGeometry(1, 1, 1), K.metal(0xc8ccd2, 0.3), rack);
+    band.position.set(150, 11, -96); band.rotation.y = -0.3; g.add(band);
+    // the cat, sitting on the worktop at the back, watching the leader go round
+    this.cat = new Cat(g, { x: 128, z: -96, ry: -2.45, size: 52, fur: 0xe8954a, belly: 0xfbe6c8 });
   }
 
   buildTray(K) {
@@ -125,7 +162,7 @@ class SpeedSkating {
     K.contact(0, 0, Lx / 2 + 8, W / 2 + 8, 0.4);
     // the ice: frosty white-blue with scratches, the lanes piped in icing, coloured sugar on the bends
     const C = 1024, ic = K.TX.makeCanvas(C, C / 2), c = ic.getContext('2d');
-    c.fillStyle = '#b9dbeb'; c.fillRect(0, 0, C, C / 2);
+    c.fillStyle = '#a2c9de'; c.fillRect(0, 0, C, C / 2);
     for (let k = 0; k < 900; k++) { c.strokeStyle = `rgba(255,255,255,${0.15 + Math.random() * 0.3})`; c.lineWidth = 0.6 + Math.random(); const x = Math.random() * C, y = Math.random() * C / 2, a = Math.random() * TAU, l = 6 + Math.random() * 30; c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); c.stroke(); }
     const px = (x) => ((x + Lx / 2) / Lx) * C, pz = (z) => ((z + W / 2) / W) * (C / 2);
     // the bends tinted with pink sugar so you can see where to lean
@@ -141,7 +178,7 @@ class SpeedSkating {
     // start / finish line in red icing
     const sp = lanePoint(R0, START_P * laneLen(R0) / LAP);
     c.strokeStyle = '#e23b2e'; c.lineWidth = 6; c.beginPath(); c.moveTo(px(sp.x), pz(R0)); c.lineTo(px(sp.x), pz(R0 + 4 * LANE)); c.stroke();
-    const ice = new THREE.Mesh(new THREE.PlaneGeometry(Lx, W).rotateX(-Math.PI / 2), new THREE.MeshPhysicalMaterial({ map: K.TX.toTexture(ic, { wrap: false }), roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.06, envMapIntensity: 1 }));
+    const ice = new THREE.Mesh(new THREE.PlaneGeometry(Lx, W).rotateX(-Math.PI / 2), new THREE.MeshPhysicalMaterial({ map: K.TX.toTexture(ic, { wrap: false }), roughness: 0.28, clearcoat: 0.7, clearcoatRoughness: 0.3, envMapIntensity: 0.35 }));
     ice.position.set(0, Y, 0); ice.receiveShadow = true; g.add(ice);
     // sweets round the inside of the bends: lean in here
     const sweets = [], cols = [0xe23b2e, 0xf2c230, 0x2fae5a, 0x2f6fe0, 0xf08aa3, 0x8a55c9];
@@ -179,7 +216,13 @@ class SpeedSkating {
     for (let k = 0; k < 7; k++) spots.push({ x: -Lx / 2 + 14 + k * (Lx - 28) / 6, y: 0, z: -W / 2 - 16, ry: 0, size: 11 + this.r() * 2 });
     for (let k = 0; k < 3; k++) spots.push({ x: Lx / 2 + 16, y: 0, z: -24 + k * 22, ry: -Math.PI / 2, size: 11 });
     for (let k = 0; k < 3; k++) spots.push({ x: -Lx / 2 - 16, y: 0, z: -24 + k * 22, ry: Math.PI / 2, size: 11 });
-    this.crowd = crowd(K.group, spots, 67);
+    // the crowd: gingerbread people, iced and cheering
+    this.crowd = gingerCrowd(K.group, spots, 67);
+    // fairy lights on cocktail sticks round the back and the ends of the tray (the front stays clear)
+    const px = Lx / 2 + 9, pz = W / 2 + 9, PH = 9;
+    const posts = [[-px, pz], [-px, 0], [-px, -pz], [-px / 2, -pz], [0, -pz], [px / 2, -pz], [px, -pz], [px, 0], [px, pz]];
+    K.instances(new THREE.CylinderGeometry(0.35, 0.35, PH, 6).translate(0, PH / 2, 0), K.std({ color: 0xe9d3a8, roughness: 0.7 }), posts.map(([x, z]) => ({ x, y: 0, z })));
+    this.rinkLights = new FairyLights(K.group, posts.map(([x, z]) => [x, PH, z]), { sag: 2.2, per: 5, bulb: 0.45, halo: 4.5, seed: 21 });
     [[-40, -W / 2 - 26], [40, -W / 2 - 26]].forEach(([x, z], k) => {
       const b = banner(competitors[k % competitors.length].code, 16, { seed: 80 + k });
       b.position.set(x, 0, z);
@@ -305,7 +348,21 @@ class SpeedSkating {
     if (lead && this.phase === 'race') this.setLapBoard(lead.finished ? 'Finish!' : lead.p >= LAP ? 'Last lap' : 'Lap 1');
     const exc = this.phase === 'race' ? 0.45 + 0.35 * clamp(lead.p / (LAP * LAPS), 0, 1) : this.phase === 'done' ? 0.55 : 0.15;
     this.crowd.update(tt, exc);
-    if (!paused) ctx.sound.setLoop('crowd', 0.2 + exc * 0.4);
+    if (!paused) {
+      ctx.sound.setLoop('crowd', 0.2 + exc * 0.4);
+      this.rinkLights.update(tt); this.windowLights.update(tt);
+      this.win.update(dt, tt);
+      const fl = 0.8 + 0.12 * Math.sin(tt * 17) + 0.08 * Math.sin(tt * 31 + 1);
+      this.candle.intensity = 900 * fl; this.flame.scale.set(1, fl, 1);
+      this.cat.update(tt, dt, lead ? this.at(lead) : null, exc);
+      // a few flakes of icing-sugar snow drifting down onto the ice
+      this.snowT = (this.snowT || 0) - dt;
+      if (this.snowT <= 0 && ctx.kit.quality.grass > 0.5) {
+        this.snowT = 0.09;
+        const Wd = 2 * (R0 + 4 * LANE + 6), Lx = 2 * SX + Wd;
+        this.particles.emit((Math.random() - 0.5) * (Lx + 30), 46, (Math.random() - 0.5) * (Wd + 20), { vy: -4.5, spread: 0.8, up: 0, color: 0xffffff, size: 1.3, life: 10, alpha: 0.8, grav: 0, grow: 1 });
+      }
+    }
     this.updateHud(tt);
     this.applyCamera(dt);
   }
