@@ -9,6 +9,7 @@ import { crowd, banner, floorMaterial } from '../props.js';
 import { Particles } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
 import { hudKit, Card, Guide, Tags, Skipper } from './common.js';
+import { winFor, helped } from '../sizes.js';
 
 const TOP = 58;                        // top of the book tower
 const BOARD_X0 = -4, BOARD_LEN = 26;   // the ruler: from its pivot under the top book to its tip
@@ -250,18 +251,22 @@ class Diving {
     // watching a computer diver: action fast-forwards
     this.skipper.update(!!d.bot, skip);
     if (this.phase === 'ready' || this.phase === 'bounce') {
-      for (const e of q) if (e.down && e.b === 'action') this.hopPress(e.t);
+      const little = d.c.human && helped(d.c);
+      if (!little) for (const e of q) if (e.down && e.b === 'action') this.hopPress(e.t);
       if (v.last) v.last.t += dt;
+      // Little divers bounce by themselves
+      if (little && (this.phase === 'ready' ? this.t > 1.2 : v.hopT >= HOP_T * (0.7 + 0.3 * v.amp) * 0.96)) this.hopPress(now);
       if (this.phase === 'bounce') {
         v.hopT += dt;
         if (v.hopT >= HOP_T * (0.7 + 0.3 * v.amp)) { v.hopT = 0; v.hops++; ctx.sound.thump(0.25 + v.amp * 0.3); if (v.hops > 8) this.takeoff(0.2); }
       }
       if (this.phase === 'ready' && this.t > 12) this.hopPress(now);
     } else if (this.phase === 'flight') {
-      const held = ctx.held(d.i);
-      v.tucked = held.action && v.flightT > 0.08;
+      const held = ctx.held(d.i), little = d.c.human && helped(d.c);
+      // a Little diver tucks with any button
+      v.tucked = (held.action || (little && (held.left || held.right))) && v.flightT > 0.08;
       if (v.tucked) v.wasTucked = true;
-      for (const e of q) if (e.down && e.b !== 'action' && !v.tucked) { v.twistGoal += 0.5; v.twistDir = e.b === 'left' ? -1 : 1; }
+      if (!little) for (const e of q) if (e.down && e.b !== 'action' && !v.tucked) { v.twistGoal += 0.5; v.twistDir = e.b === 'left' ? -1 : 1; }
       v.flightT += dt;
       v.theta += (v.tucked ? W_TUCK : W_OPEN) * dt;
       if (v.twist < v.twistGoal) v.twist = Math.min(v.twistGoal, v.twist + TWIST_RATE * dt);
@@ -315,7 +320,7 @@ class Diving {
     // the best moment is just as the feet meet the board (the start or end of a hop)
     const len = HOP_T * (0.7 + 0.3 * v.amp);
     const u = v.hopT / len;
-    const q = clamp(1 - Math.min(u, 1 - u) / 0.22, 0, 1);
+    const q = clamp(1 - Math.min(u, 1 - u) / winFor(this.cur.c, 0.22), 0, 1);
     v.q.push(q);
     v.amp = clamp(v.amp + 0.1 + 0.2 * q, 0, 1);
     // how it went, shown next to the board: great, or early (before the feet land) / late (after)
@@ -345,13 +350,15 @@ class Diving {
     const som = Math.max(0, Math.round((v.theta - Math.PI) / TAU)) + 0.5;
     const feet = err > Math.PI / 2;
     const cannon = v.tucked;
-    let exe = 10 - 7.5 * clamp(err / 1.1, 0, 1) - (cannon ? 3 : 0) - twistLeft * 6 - (feet ? 1.5 : 0);
+    // smaller divers: the judges are kinder about the angle
+    let exe = 10 - 7.5 * clamp(err / winFor(d.c, 1.1), 0, 1) - (cannon ? 3 : 0) - twistLeft * 6 - (feet ? 1.5 : 0);
     if (v.T < 1.75) exe -= 0.5;
     exe = clamp(exe, 0, 10);
     const twists = Math.floor(v.twist * 2 + 1e-6) / 2;
     const dd = feet ? 1.0 : Math.round((1.2 + 0.45 * (som - 0.5) + 0.35 * twists) * 10) / 10;
     const c = this.called;
-    const wrong = c.som != null && (feet || som !== c.som || twists !== c.tw);
+    // the called dive; a Little diver only has to get the somersaults right
+    const wrong = c.som != null && (feet || som !== c.som || (twists !== c.tw && !helped(d.c)));
     v.result = { err, som: feet ? som - 0.5 : som, twists, exe, dd, cannon, feet, wrong };
     v.vy = -10;
     this.phase = 'entry'; this.t = 0;
@@ -492,7 +499,8 @@ class Diving {
     this.guide.show(!!show);
     if (show) {
       const touch = d.c.type === 'touch', a = touch ? '●' : 'action';
-      this.guide.tip(ph === 'ready' ? `${this.called.name} · tap ${a} to start bouncing`
+      this.guide.tip(helped(d.c) ? (ph === 'flight' ? 'hold any button to spin · let go when the dial is green' : 'you bounce by yourself · get ready to spin!')
+        : ph === 'ready' ? `${this.called.name} · tap ${a} to start bouncing`
         : ph === 'bounce' ? `tap ${a} as the ring closes (feet on the board): ${BOUNCES} bounces, the last one takes off`
           : `hold ${a} to tuck and spin · let go when the dial is green${this.called.tw ? ` · then tap ${touch ? '◀ ▶' : 'left/right'} twice to twist` : ` · ${touch ? '◀ ▶' : 'left/right'}: twist`}`);
     }
@@ -513,7 +521,7 @@ class Diving {
       const err = Math.abs(wrapPi(end - Math.PI));
       const target = this.called.som;
       const endSom = Math.max(0, Math.round((end - Math.PI) / TAU)) + 0.5;
-      const good = err < 0.45 && !v.tucked && (target == null || endSom === target);
+      const good = err < winFor(d.c, 0.45) && !v.tucked && (target == null || endSom === target);
       const ang = (end * 180) / Math.PI;
       const svg = `<svg width="58" height="58" viewBox="-29 -29 58 58"><circle r="25" fill="rgba(255,244,220,.92)" stroke="#1f1a17" stroke-width="3"/><path d="M0 0 L${(Math.sin(0.45) * 24).toFixed(1)} ${(Math.cos(0.45) * 24).toFixed(1)} A24 24 0 0 1 ${(-Math.sin(0.45) * 24).toFixed(1)} ${(Math.cos(0.45) * 24).toFixed(1)} Z" fill="#7be495"/><g transform="rotate(${ang.toFixed(0)})"><line x1="0" y1="6" x2="0" y2="-19" stroke="${good ? '#2fae5a' : '#e23b2e'}" stroke-width="4" stroke-linecap="round"/><circle cy="-19" r="4.5" fill="${good ? '#2fae5a' : '#e23b2e'}"/></g></svg>`;
       const som = Math.max(0, v.theta / TAU);
@@ -553,6 +561,10 @@ export default {
     { verb: 'Power', text: '<b>Hold action</b> to tuck and spin, let go to stretch out. The dial next to you turns <b>green</b> when stretching out now gets you in head first.' },
     { verb: 'Steer', text: 'Stretched out, tap <b>left</b> or <b>right</b> for half twists. Dive 1 is 1½ somersaults, dive 2 adds a twist, dive 3 is your choice: a different dive from the one called scores half.' },
   ],
+  helpers: {
+    little: 'You <b>bounce by yourself</b>. In the air, hold <b>any button</b> to spin and let go when the dial turns <b>green</b>. No twists needed.',
+    kid: 'More time on the board, and the dial and the judges forgive a bit more.',
+  },
   better: 'higher',
   resultsDelay: 0.6,
   create: (ctx) => new Diving(ctx),

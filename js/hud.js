@@ -15,7 +15,8 @@ export class Hud {
     this.chips = competitors.map((c) => {
       const el = document.createElement('div');
       el.className = 'chip';
-      el.innerHTML = `<img src="${c.flag}" alt=""><span class="chip-name">${c.short || c.name}</span><span class="chip-info"></span>`;
+      const size = c.human && c.size && c.size !== 'big' ? `<span class="chip-size" title="Helpers on">${c.size === 'little' ? 'Little' : 'Kid'}</span>` : '';
+      el.innerHTML = `<img src="${c.flag}" alt=""><span class="chip-name">${c.short || c.name}</span>${size}<span class="chip-info"></span>`;
       this.chipsEl.appendChild(el);
       return { el, info: el.querySelector('.chip-info'), _i: null, _c: null };
     });

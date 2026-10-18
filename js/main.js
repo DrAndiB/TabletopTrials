@@ -6,6 +6,7 @@ import { Sound } from './audio.js';
 import { Game } from './game.js';
 import { Hud } from './hud.js';
 import { EVENTS, SOON, eventById, eventIcon } from './events/index.js';
+import { SIZES, SIZE_ORDER } from './sizes.js';
 import { COUNTRIES, DEFAULTS, countryByCode } from './data/countries.js';
 import { flagURL } from './flags.js';
 import { paintedFlagCanvas } from './props.js';
@@ -33,7 +34,7 @@ function loadSettings() {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
     if (s && Array.isArray(s.teams) && s.teams.length === 4) {
       const out = { ...defaults, ...s };
-      out.teams = s.teams.map((t, i) => ({ type: TYPES.includes(t.type) ? t.type : 'cpu', code: countryByCode(t.code).code || DEFAULTS[i] }));
+      out.teams = s.teams.map((t, i) => ({ type: TYPES.includes(t.type) ? t.type : 'cpu', code: countryByCode(t.code).code || DEFAULTS[i], size: SIZE_ORDER.includes(t.size) ? t.size : 'big' }));
       if (!['trials', 'single'].includes(out.mode)) out.mode = 'trials';
       if (!EVENTS.some((e) => e.id === out.event)) out.event = EVENTS[0].id;
       out.trials = Array.isArray(s.trials) ? s.trials.filter((id) => EVENTS.some((e) => e.id === id)) : EVENTS.map((e) => e.id);
@@ -86,7 +87,7 @@ function competitorsFromTeams() {
   settings.teams.forEach((t, i) => {
     if (t.type === 'off') return;
     const c = countryByCode(t.code);
-    list.push({ slot: i, type: t.type, code: c.code, name: teamName(i), short: teamName(i), paint: c.paint, seed: teamSeed(i), number: i + 1, color: SEAT_COLORS[i], flag: flagURL(c.code, 72) });
+    list.push({ slot: i, type: t.type, size: t.type === 'cpu' ? 'big' : (t.size || 'big'), code: c.code, name: teamName(i), short: teamName(i), paint: c.paint, seed: teamSeed(i), number: i + 1, color: SEAT_COLORS[i], flag: flagURL(c.code, 72) });
   });
   return list;
 }
@@ -111,8 +112,10 @@ function renderSetup() {
       <button class="team-flag" style="background-image:url(${flagURL(t.code, 152)})" aria-label="Change country for ${SEAT[i]} (now ${teamName(i)})"></button>
       <span class="team-name">${teamName(i)}</span>
       <button class="team-type" aria-label="Change who plays for ${SEAT[i]}">${TYPE_LABEL[t.type]}<span class="cyc">⟳</span></button>
-      <span class="team-hint">${keyHint(i, t)}</span>`;
+      <span class="team-hint">${keyHint(i, t)}</span>
+      ${t.type === 'keys' || t.type === 'touch' ? `<div class="team-size seg" role="group" aria-label="Player size">${SIZE_ORDER.map((k) => `<button data-size="${k}" class="${(t.size || 'big') === k ? 'on' : ''}" title="${SIZES[k].ages}">${SIZES[k].label} <small>${SIZES[k].ages}</small></button>`).join('')}</div>` : ''}`;
     card.querySelector('.team-flag').onclick = () => { sound.click(); openCountry(i); };
+    for (const b of card.querySelectorAll('.team-size button')) b.onclick = () => { sound.click(); t.size = b.dataset.size; saveSettings(); renderSetup(); };
     card.querySelector('.team-type').onclick = () => {
       sound.click();
       t.type = TYPES[(TYPES.indexOf(t.type) + 1) % TYPES.length];
@@ -322,7 +325,10 @@ function showIntro(def) {
   $('#intro-kicker').textContent = n > 1 ? `The Trials · event ${run.index + 1} of ${n} · ${def.season}` : `${def.season} event`;
   $('#intro-title').textContent = def.name;
   $('#intro-venue').textContent = def.venue;
-  $('#intro-how').innerHTML = def.how.map((h) => `<div class="how"><span class="verb">${h.verb}</span><span>${h.text}</span></div>`).join('');
+  // the helpers for Little and Kid players, when someone plays at that size
+  const sizes = new Set(game.competitors.filter((c) => c.human).map((c) => c.size));
+  const helps = ['little', 'kid'].filter((z) => sizes.has(z) && def.helpers?.[z]).map((z) => `<div class="how help"><span class="verb">${SIZES[z].label}</span><span>${def.helpers[z]}</span></div>`).join('');
+  $('#intro-how').innerHTML = def.how.map((h) => `<div class="how"><span class="verb">${h.verb}</span><span>${h.text}</span></div>`).join('') + helps;
   const k = (c) => `<kbd>${input.keyLabel(c)}</kbd>`;
   $('#intro-players').innerHTML = game.competitors.filter((c) => c.human).map((c) => {
     const b = input.bindings[c.slot];
@@ -588,6 +594,7 @@ function frame(now) {
   if (params.get('autostart')) {
     // tests and quick checks: ?autostart=1&event=sprint&p=keys,cpu,cpu,cpu&mode=single
     if (params.get('p')) params.get('p').split(',').forEach((t, i) => { settings.teams[i].type = TYPES.includes(t) ? t : 'cpu'; });
+    if (params.get('size')) params.get('size').split(',').forEach((z, i) => { if (settings.teams[i]) settings.teams[i].size = SIZE_ORDER.includes(z) ? z : 'big'; });
     if (params.get('event')) { settings.event = params.get('event'); settings.mode = 'single'; }
     if (params.get('mode')) settings.mode = params.get('mode');
     if (params.get('skill')) settings.skill = params.get('skill');

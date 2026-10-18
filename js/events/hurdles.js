@@ -7,6 +7,7 @@ import { Sprint } from './sprint.js';
 import { REST, blendPose, POSES } from '../figurine.js';
 import { clamp } from '../util.js';
 import { Rhythm } from '../verbs.js';
+import { winFor, helped } from '../sizes.js';
 
 const HURDLES = Array.from({ length: 10 }, (_, k) => 39 + k * 25.5);
 const DOM_H = 4.8;            // a domino standing on end
@@ -119,10 +120,10 @@ class Hurdles extends Sprint {
   tuneEffort(ru, x, eff) { return x > 1.15 ? eff * Math.max(0.8, 1 - (x - 1.15) * 0.5) : eff; }
 
   // ACTION during the race: jump
-  onAction(ru, t) {
+  onAction(ru, t, auto = false) {
     if (ru.air || ru.downT > 0) return;
     ru.air = true; ru.jumpT0 = t; ru.crossed = false;
-    ru.rhythm.press('action', t);
+    if (!auto) ru.rhythm.press('action', t);
     if (ru.c.human) this.ctx.sound.whoosh(0.35);
   }
 
@@ -142,8 +143,10 @@ class Hurdles extends Sprint {
     const u = ru.air ? (tc - ru.jumpT0) / JUMP_T : -1;
     const ctx = this.ctx;
     if (ru.air) ru.crossed = true;
-    if (u >= CLEAN[0] && u <= CLEAN[1]) return;
-    if (u >= CLIP[0] && u <= CLIP[1]) {
+    // smaller players have a wider window over the pencil
+    const cw = Math.min(0.49, winFor(ru.c, (CLEAN[1] - CLEAN[0]) / 2)), kw = Math.max(cw, winFor(ru.c, (CLIP[1] - CLIP[0]) / 2));
+    if (u >= 0.5 - cw && u <= 0.5 + cw) return;
+    if (u >= 0.5 - kw && u <= 0.5 + kw) {
       // clipped the pencil: it falls, you lose a little speed
       ru.v *= 0.84; ru.stumbleT = 0.3; ru.clips++;
       this.knock(ru, hx, false);
@@ -156,6 +159,15 @@ class Hurdles extends Sprint {
     ru.v = 0; ru.downT = 1.0; ru.air = false; ru.y = 0; ru.jumpU = 0; ru.x = hx + 1;
     ctx.sound.thump?.(0.7); ctx.sound.stumble(this.pan(ru.x));
     if (ru.c.human) ctx.hud.flash(`${ru.c.short}: oops!`, '#ff8a65');
+  }
+
+  // Little players (and anyone jogging home) jump by themselves, right at the chalk mark
+  assist(ru, now) {
+    super.assist(ru, now);
+    if (!(helped(ru.c) || ru.walkHome) || !ru.started || ru.finished || ru.air || ru.downT > 0) return;
+    const hx = HURDLES[ru.next];
+    if (hx == null) return;
+    if ((hx - ru.x - ru.v * JUMP_T * 0.5) / Math.max(5, ru.v) <= 0) { this.onAction(ru, now, true); ru.autoJumps = (ru.autoJumps || 0) + 1; }
   }
 
   // computer hurdlers take off around the chalk mark, a little early or late
@@ -220,6 +232,10 @@ export default {
     { verb: 'Rhythm', text: 'Tap <b>left</b> or <b>right</b> on a steady beat to run: no need to swap, no need to rush.' },
     { verb: 'Timing', text: 'Tap <b>action</b> to jump at the <b>chalk mark</b>. Keep the beat and it goes tap, tap, tap, tap, <b>jump</b> for every hurdle. Clip a pencil and you slow down; run into one and down you go.' },
   ],
+  helpers: {
+    little: 'You start and <b>jump by yourself</b>. Just tap <b>any button</b> on a slow, steady beat.',
+    kid: 'A slower beat, and more room to get over each pencil.',
+  },
   better: 'lower',
   resultsDelay: 0.9,
   create: (ctx) => new Hurdles(ctx),

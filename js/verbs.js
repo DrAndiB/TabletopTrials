@@ -9,6 +9,11 @@ export class Rhythm {
   constructor({ target = 6.5, keep = 8 } = {}) {
     this.target = target;     // strides per second that give full effort
     this.keep = keep;         // intervals averaged
+    this.k = 1;               // the player's size scales the beat (a Little player's target is slower)
+    this.top = 1;             // and the share of full effort a perfect beat is worth
+    this.hold = 1.5;          // a gap this many beats long before the beat starts to fade (longer for little hands)
+    this.slack = 0.32;        // how uneven the taps may get before it costs anything
+    this.any = false;         // Little players: any button is the next step, no need to alternate
     this.reset();
   }
   reset() {
@@ -20,6 +25,7 @@ export class Rhythm {
   }
   // -> 'first' | 'stride' | 'stumble'
   press(side, t) {
+    if (this.any && this.last === side) side = side === 'left' ? 'right' : 'left';
     if (this.last === side) { this.stumbles++; this.lastStumble = t; return 'stumble'; }
     const first = this.last === null || t - this.lastT > 1.2;
     this.last = side;
@@ -43,7 +49,7 @@ export class Rhythm {
     if (!isFinite(m)) return t - this.lastT < 0.5 ? 1.5 : 0;
     // the beat only fades once the current gap is clearly longer than usual (a real pause)
     const since = t - this.lastT;
-    return since > m * 1.5 ? 1 / (since / 1.5) : 1 / m;
+    return since > m * this.hold ? 1 / (since / this.hold) : 1 / m;
   }
   // coefficient of variation of the recent intervals (0 = metronome)
   unsteadiness() {
@@ -54,13 +60,16 @@ export class Rhythm {
     for (const x of this.intervals) v += (x - m) * (x - m);
     return Math.sqrt(v / n) / m;
   }
+  // the beat that gives full effort for this player, and how close to it they are (1 = right on it)
+  get goal() { return this.target * this.k; }
+  ratio(t) { return this.cadence(t) / this.goal; }
   // 0..1.04: share of full running effort
   effort(t) {
-    const x = this.cadence(t) / this.target;
+    const x = this.ratio(t);
     let e = x <= 1 ? x : 1 + 0.04 * (1 - Math.exp(-(x - 1) * 5));
     // only really erratic tapping costs anything; normal keyboard and touch jitter does not
-    e *= 1 - clamp((this.unsteadiness() - 0.32) * 0.8, 0, 0.25);
-    return e;
+    e *= 1 - clamp((this.unsteadiness() - this.slack) * 0.8, 0, 0.25);
+    return e * this.top;
   }
 }
 

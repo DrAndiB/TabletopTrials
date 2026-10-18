@@ -4,6 +4,7 @@ import * as THREE from '../../vendor/three.bundle.js';
 import { Figurine, POSES, blendPose } from '../figurine.js';
 import { crowd, banner, letterBlock, crayon } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
+import { fitRhythm, winFor, helped } from '../sizes.js';
 import { Particles } from '../fx.js';
 import * as TX from '../textures.js';
 import { clamp, lerp, damp, rng, makeNoise2D } from '../util.js';
@@ -76,7 +77,7 @@ export class Sprint {
       fig.root.rotation.y = Math.PI / 2;
       g.add(fig.root);
       const run = {
-        c, fig, lane, z, x: -6, v: 0, rhythm: this.makeRhythm(),
+        c, fig, lane, z, x: -6, v: 0, rhythm: fitRhythm(this.makeRhythm(), c), little: c.human && helped(c),
         started: false, tGo: null, reaction: null, finished: false, tFinish: null, time: null,
         anim: 0, effort: 0, effortAnim: 0, runW: 0, stumbleT: 0, cards: 0, heldBack: false, block: false, slipT: 0, zone: 'drive',
         bot: c.human ? null : new BotTapper(c.pad, rng(c.seed * 31 + 7)),
@@ -423,7 +424,7 @@ export class Sprint {
 
   // the start call tells humans to hold their action key in the blocks
   marksText() {
-    const humans = this.runners.filter((ru) => ru.c.human);
+    const humans = this.runners.filter((ru) => ru.c.human && !helped(ru.c));
     if (!humans.length) return 'On your marks';
     return `On your marks · hold ${humans.every((ru) => ru.c.type === 'touch') ? '●' : 'action'}`;
   }
@@ -459,6 +460,7 @@ export class Sprint {
         const ru = this.runners[i];
         if (ru.cpuJump != null && this.t >= ru.cpuJump) { ru.cpuJump = null; ru.c.pad.push('left', true, now); ru.c.pad.push('left', false, now + 0.03); }
         const q = ctx.presses(i);
+        if (ru.c.human && helped(ru.c)) continue;   // Little players start by themselves
         // holding ACTION in the blocks is fine; letting go of it, or a step, before the whistle is not
         for (const e of q) if (e.b === 'action' && e.down) ru.block = true;
         const jumped = q.some((e) => (e.down && e.b !== 'action') || (!e.down && e.b === 'action' && ru.block));
@@ -505,6 +507,7 @@ export class Sprint {
     ctx.sound.whistle(0.5);
     for (const ru of this.runners) {
       ru.tGo = now + (ru.heldBack ? 0.5 : 0);
+      ru.autoGo = ru.c.human && helped(ru.c) ? ru.tGo + 0.3 : null;
       if (ru.bot) {
         const [a, b] = ctx.skill.react;
         ru.botGo = ru.tGo + a + this.r() * (b - a);
@@ -529,7 +532,10 @@ export class Sprint {
         if (!ru.started && ru.botGo != null && now >= ru.botGo) { ru.started = true; ru.reaction = ru.botGo - this.whistleAt; ru.startT = ru.botGo; ru.v = blockBoost(ru.reaction) * this.vmax / VMAX; }
         this.botExtra?.(ru, now);
       }
-      for (const e of ctx.presses(i)) {
+      if (ru.c.human && !ru.finished) this.assist(ru, now);
+      for (const e0 of ctx.presses(i)) {
+        // for Little players every button is a step (they start, and in the hurdles jump, by themselves)
+        const e = ru.little && ru.started && e0.b === 'action' ? { ...e0, b: 'left' } : e0;
         if (e.t < ru.tGo) continue; // held back runners wait their half second
         // letting go of ACTION in the blocks is the push-off
         if (e.b === 'action') {
@@ -558,18 +564,19 @@ export class Sprint {
       // speed
       let eff = ru.started ? ru.rhythm.effort(now) : 0;
       if (ru.started && !ru.finished) {
-        const x = ru.rhythm.cadence(now) / ru.rhythm.target;
-        // the drive: legs spinning too fast slip on the floorboards
-        if (ru.zone === 'drive' && x > 1.15) {
-          eff *= Math.max(0.72, 1 - (x - 1.15) * 0.7);
-          if (x > 1.3 && ru.slipT <= 0) { ru.slipT = 0.6; ru.v *= 0.93; ru.stumbleT = 0.25; ctx.sound.stumble(this.pan(ru.x)); }
+        const x = ru.rhythm.ratio(now), sl = winFor(ru.c, 0.15);
+        // the drive: legs spinning too fast slip on the floorboards (a smaller player has more room)
+        if (ru.zone === 'drive' && x > 1 + sl) {
+          eff *= Math.max(0.72, 1 - (x - 1 - sl) * 0.7);
+          if (x > 1 + 2 * sl && ru.slipT <= 0) { ru.slipT = 0.6; ru.v *= 0.93; ru.stumbleT = 0.25; ctx.sound.stumble(this.pan(ru.x)); }
         }
         // tired legs: an uneven beat costs more
-        if (ru.zone === 'tired') eff *= 1 - clamp((ru.rhythm.unsteadiness() - 0.26) * 0.8, 0, 0.18);
+        if (ru.zone === 'tired') eff *= 1 - clamp((ru.rhythm.unsteadiness() - ru.rhythm.slack + 0.06) * 0.8, 0, 0.18);
         if (this.tuneEffort) eff = this.tuneEffort(ru, x, eff);
         ru.over = x;
       }
       if (ru.slipT > 0) ru.slipT -= dt;
+      if (ru.walkHome) eff = Math.max(eff, ru.walkHome);
       ru.effort = eff;
       if (ru.downT > 0) { ru.downT -= dt; eff = 0; }
       const target = ru.finished ? 0 : this.vmax * eff;
@@ -594,9 +601,23 @@ export class Sprint {
     const lx = leader ? leader.x : 0;
     this.excite = Math.max(this.excite * Math.exp(-0.4 * dt), clamp((lx - 120) / 180, 0.12, 1));
     // when is it over?
+    // everyone gets home: the race waits for the players (their legs take over after a while)
     const done = this.runners.every((ru) => ru.finished);
-    if (this.firstFinish != null && (done || now - this.firstFinish > 8)) this.startReplay(now);
-    else if (this.firstFinish == null && now - this.whistleAt > 30) this.startReplay(now);
+    const waiting = this.runners.some((ru) => ru.c.human && !ru.finished);
+    if (done || now - this.whistleAt > 90) this.startReplay(now);
+    else if (!waiting && (this.firstFinish != null ? now - this.firstFinish > 8 : now - this.whistleAt > 30)) this.startReplay(now);
+  }
+
+  // Little players start by themselves; anyone still out there a while after the winner jogs home
+  assist(ru, now) {
+    if (!ru.started && ru.autoGo != null && now >= ru.autoGo) {
+      ru.started = true; ru.reaction = ru.autoGo - this.whistleAt; ru.startT = ru.autoGo; ru.block = false;
+      ru.v = blockBoost(ru.reaction) * this.vmax / VMAX;
+    }
+    const late = this.firstFinish != null ? now - this.firstFinish - 5 : now - this.whistleAt - 25;
+    ru.walkHome = late > 0 ? Math.min(0.8, 0.35 + late * 0.08) : 0;
+    if (ru.walkHome && !ru.started) { ru.started = true; ru.startT = now; ru.block = false; ru.jogged = true; }
+    if (ru.walkHome) ru.jogged = true;
   }
 
   finishRunner(ru, tc) {
@@ -647,6 +668,7 @@ export class Sprint {
       const notes = [];
       if (ru.reaction != null) notes.push(`reaction ${ru.reaction.toFixed(2)} s`);
       if (ru.cards) notes.push(ru.heldBack ? 'held back after two false starts' : '1 false start');
+      if (ru.jogged) notes.push('jogged home');
       const more = this.resultNote?.(ru);
       if (more) notes.push(more);
       return { value: ru.time, text: `${ru.time.toFixed(2)} s`, short: `${ru.time.toFixed(2)} s`, sub: notes.join(' · ') };
@@ -762,7 +784,7 @@ export class Sprint {
     for (const m of this.meters) {
       const e = m.ru.started && !m.ru.finished ? clamp(m.ru.effort / 1.04, 0, 1) : 0;
       m.bar.style.width = `${(e * 100).toFixed(1)}%`;
-      const ru = m.ru, fast = ru.started && ru.zone === 'drive' && ru.over > 1.15;
+      const ru = m.ru, fast = ru.started && ru.zone === 'drive' && ru.over > 1 + winFor(ru.c, 0.15);
       const k = fast ? 'rm fast' : e >= 0.92 ? 'rm go' : e >= 0.7 ? 'rm ok' : 'rm';
       if (k !== m.k) { m.d.className = k; m.k = k; }
       const touch = ru.c.type === 'touch';
@@ -861,6 +883,10 @@ export default {
     { verb: 'Timing', text: 'In the blocks, hold <b>action</b>. Let go the moment the <b>whistle</b> blows for a flying start: letting go after <b>Set</b> is a false start.' },
     { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to run. Out of the blocks, smooth steps: legs spinning too fast slip. Then a steady, quick beat, and dig in a little faster for the last stretch.' },
   ],
+  helpers: {
+    little: 'You start by yourself on the whistle. Then tap <b>any button</b> on a slow, steady beat: the bar goes green.',
+    kid: 'Your beat is slower than a grown-up\'s, and you can go a bit wild out of the blocks before you slip.',
+  },
   better: 'lower',
   resultsDelay: 0.9,
   create: (ctx) => new Sprint(ctx),

@@ -6,6 +6,7 @@ import { Figurine, POSES, blendPose } from '../figurine.js';
 import { crowd, banner, paintedFlagTexture } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles } from '../fx.js';
+import { fitRhythm, helped } from '../sizes.js';
 import { clamp, damp, rng, makeNoise2D } from '../util.js';
 
 const LINE_X = 0;              // the foul line
@@ -288,7 +289,7 @@ class Javelin {
       if (this.round < ATTEMPTS) { this.round++; this.turn = 0; this.ctx.hud.message(this.round === ATTEMPTS ? 'Last throw!' : `Throw ${this.round}`, 'small', '#ffc93c', 1.4); } else { this.finishAll(); return; }
     }
     const th = this.cur = this.throwers[this.order[this.turn]];
-    this.ath = { x: RUN_X, v: 0, rhythm: new Rhythm({ target: TARGET }), started: false, holding: false, angle: A0, anim: 0, effort: 0, released: false, relT: 0 };
+    this.ath = { x: RUN_X, v: 0, rhythm: fitRhythm(new Rhythm({ target: TARGET }), th.c), little: th.c.human && helped(th.c), started: false, holding: false, angle: A0, anim: 0, effort: 0, released: false, relT: 0 };
     this.pen = null;
     this.land = null;
     this.phase = 'ready';
@@ -332,9 +333,9 @@ class Javelin {
     const a = this.ath;
     if (this.phase === 'ready' || this.phase === 'runup') {
       for (const e of q) {
-        if (e.b === 'action') {
+        if (e.b === 'action' && !(a.little && !a.started)) {
           if (e.down && !a.holding && a.started) { a.holding = true; a.holdT = e.t; ctx.sound.pop(); }
-          else if (!e.down && a.holding) { this.release(e.t); break; }
+          else if (!e.down && a.holding && !a.little) { this.release(e.t); break; }
           continue;
         }
         if (!e.down || a.holding) continue;
@@ -349,9 +350,13 @@ class Javelin {
         // drawing back: the run carries on, just a little slower
         const target = a.holding ? a.v : VMAX * eff;
         a.v += (target - a.v) * (1 - Math.exp(-(target > a.v ? ACCEL : 1.2) * dt));
+        // a Little thrower's arm does it all by itself
         if (a.holding) { a.v *= Math.exp(-0.35 * dt); a.angle = Math.min(A_MAX, A0 + (now - a.holdT) * A_RATE); }
+        if (a.little && !a.holding && a.x > LINE_X - (a.v * 0.55 + 2.5)) { a.holding = true; a.holdT = now; ctx.sound.pop(); }
+        if (a.little && a.holding && a.angle >= 35) { this.release(now); return; }
         a.x += a.v * dt;
-        if (a.x > LINE_X) { this.foul('Foul! Over the line'); return; }
+        // smaller players never foul: at the line the pencil goes, at whatever angle it has
+        if (a.x > LINE_X) { if (helped(th.c, 1)) this.release(now); else this.foul('Foul! Over the line'); return; }
       }
     } else if (this.phase === 'flight') {
       const p = this.pen;
@@ -574,6 +579,10 @@ export default {
     { verb: 'Power', text: 'Near the line, <b>hold action</b> to draw back: the pencil tips up as you hold. Let go at <b>30 to 40°</b>.' },
     { verb: 'Timing', text: 'Let go before the <b>red line</b>: step over it and the throw doesn\'t count. Three throws, the best one counts.' },
   ],
+  helpers: {
+    little: 'Tap <b>any button</b> on a steady beat to run. Tap <b>action</b> to throw, or the throw happens by itself at the line, always at a great angle.',
+    kid: 'No fouls: if you reach the red line, the pencil flies anyway. Hold <b>action</b> early enough to tip it up.',
+  },
   better: 'higher',
   resultsDelay: 0.6,
   create: (ctx) => new Javelin(ctx),

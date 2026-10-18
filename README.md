@@ -10,6 +10,10 @@ animals cheer from cardboard-box stands. Sibling of [Tabletop Turbo](https://git
 - Up to four players on one keyboard (each player has left, right and action), on touch screens, or
   against computer kids (easy, normal, hard). Every team picks a country: real flags, a capital and a
   fun fact on the way in.
+- **Player sizes**: every human player is Little (3–5), Kid (6–9) or Big (10+). Smaller players tap a
+  slower beat, get wider timing windows, and Little players get helpers that take over the extra rules,
+  so each event comes down to one trick (the helpers are listed on each event's intro). Nobody is left
+  out on the course: a player still racing well after the winner jogs, paddles or glides home.
 
 | Event | Season | How it plays |
 |---|---|---|
@@ -18,7 +22,7 @@ animals cheer from cardboard-box stands. Sibling of [Tabletop Turbo](https://git
 | Swimming | Summer | Two lengths of the bathtub: hold action on the soap bar and let go on the whistle, tap left and right for the strokes, tap action to breathe before the air runs out and over the green tiles for a tumble turn. |
 | Diving | Summer | Off a ruler on a tower of books into the goldfish bowl: three bounces timed on a closing ring, hold action to tuck and spin, let go when the dial turns green, left/right for half twists. Called dives (1½, 1½ with a twist, your choice), five plush judges. |
 | Javelin | Summer | A pencil down the living-room rug: rhythm run-up, hold action to draw back, let go at 30-40° before the red line. Three throws. |
-| Pole vault | Summer | A bendy straw over a skewer bar on two rulers: rhythm run-up, press and hold action on the green tape as the ring closes on your feet to plant, let go when the needle is in the green to push off. The bar goes up 20 cm a round; two misses at a height and you're out. |
+| Pole vault | Summer | A bendy straw over a skewer bar on two rulers: rhythm run-up, press and hold action on the green tape as the ring closes on your feet to plant, let go when the needle is in the green to push off. Everyone has their own bar (Little opens at 3.20 m, Kid at 4.00 m, Big at 4.80 m), up 40 cm per clearance below 4.80 m and 20 cm above; two misses at a height and you're out. |
 | Ski jump | Winter | Down an ironing board onto a cushion mountain: tap to start, keep your balance, tap in the green zone, lean against announced fan gusts, tap at LAND! for a telemark. Two jumps. |
 | Speed skating | Winter | Two laps of an ice oval in a baking tray: long steady strokes, tap action at the sweets to lean into a bend and again after it to stand up. |
 | Curling | Winter | Bottle caps down the kitchen table: aim (straight goes straight, aimed to one side the cap curls back to the middle, a dotted line shows the path), hold for strength, sweep with a toothbrush in rhythm. |

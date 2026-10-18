@@ -7,6 +7,7 @@ import { Figurine, POSES, REST, blendPose } from '../figurine.js';
 import { crowd, banner } from '../props.js';
 import { Particles } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
+import { winFor, helped } from '../sizes.js';
 import { hudKit, Card, Guide, Tags, Skipper } from './common.js';
 
 const FB = 14, RP = 22, VW = 4;       // flat bottom width, transition radius, vertical wall above it
@@ -241,8 +242,10 @@ class Halfpipe {
     }
     // watching a computer rider: action fast-forwards
     this.skipper.update(!!rd.bot, skip);
+    // Little riders pump by themselves and spin with any button (no grabs to worry about)
+    const little = rd.c.human && helped(rd.c);
     if (this.phase === 'ready') {
-      if (q.some((e) => e.down && e.b === 'action') || this.t > 8) { this.phase = 'ride'; this.t = 0; ctx.hud.message(''); ctx.sound.whoosh(0.4); }
+      if (q.some((e) => e.down && (e.b === 'action' || little)) || this.t > 8) { this.phase = 'ride'; this.t = 0; ctx.hud.message(''); ctx.sound.whoosh(0.4); }
       return;
     }
     if (this.phase === 'ended') {
@@ -257,11 +260,11 @@ class Halfpipe {
       const a = s.air;
       a.t += dt;
       // hold left or right to spin that way; let go and the half turn under way finishes by itself
-      const dirHeld = held.left && !held.right ? -1 : held.right && !held.left ? 1 : 0;
+      const dirHeld = little ? (held.left || held.right || held.action ? 1 : 0) : held.left && !held.right ? -1 : held.right && !held.left ? 1 : 0;
       if (dirHeld && !a.spinDir) a.spinDir = dirHeld;
       a.spinning = dirHeld !== 0 && dirHeld === a.spinDir && a.t > 0.04;
       if (a.spinning) { a.spun += SPIN * dt; a.goal = Math.ceil(a.spun * 2 - 1e-6) / 2; } else if (a.spun < a.goal) a.spun = Math.min(a.goal, a.spun + SPIN * dt);
-      a.grabbing = held.action && a.t > 0.08;
+      a.grabbing = !little && held.action && a.t > 0.08;
       if (a.grabbing) { a.grabT += dt; a.lastGrab = a.t; }
       if (a.t >= a.T) this.landAir();
     } else if (s.crashT > 0) {
@@ -270,8 +273,9 @@ class Halfpipe {
       s.q = damp(s.q, 0, 2.2, dt); s.v = 0;
       if (s.crashT <= 0) { s.E = H * 0.62; s.dir = s.q > 0 ? -1 : 1; s.pumped = false; }
     } else {
-      for (const e of q) if (e.down && e.b === 'action' && Math.abs(s.q) <= PUMP_W && !s.pumped) {
-        const qual = clamp(1 - (Math.abs(s.q) / PUMP_W) * 0.85, 0, 1);
+      const auto = little && !s.pumped && Math.abs(s.q) <= PUMP_W * 0.3 && Math.sign(s.q) !== s.dir;
+      for (const e of auto ? [{ down: true, b: 'action' }] : q) if (e.down && e.b === 'action' && Math.abs(s.q) <= PUMP_W && !s.pumped && !(little && !auto)) {
+        const qual = auto ? 0.75 : clamp(1 - (Math.abs(s.q) / PUMP_W) * 0.85 / winFor(rd.c, 1), 0, 1);
         s.pumped = true; s.pumpQ = qual;
         s.E = Math.min(EMAX, s.E + PUMP * (0.4 + 0.6 * qual));
         if (rd.c.human) s.note = { text: qual > 0.7 ? 'great pump!' : 'pump', col: qual > 0.7 ? '#7be495' : '#fff1d6', t: 0 };
@@ -312,8 +316,9 @@ class Halfpipe {
     const left = (a.goal - a.spun) * 360 + (a.spinning ? 45 : 0);  // degrees still to turn (still holding: more)
     const late = a.lastGrab >= 0 ? a.T - a.lastGrab : 9;           // time since the grab was let go
     let quality = 'clean';
-    if (left > 80) quality = 'crash';
-    else if (left > 30 || late < 0.08) quality = 'sketchy';
+    // smaller riders get away with more
+    if (left > winFor(rd.c, 80)) quality = 'crash';
+    else if (left > winFor(rd.c, 30) || late < 0.08 / winFor(rd.c, 1)) quality = 'sketchy';
     const { name, pts } = this.airPoints(a.h, Math.round(a.spun * 2), a.grabT, quality, s.airs);
     if (quality === 'crash') { s.crashT = 1.3; s.crashSpin = 0; ctx.sound.thump(0.6); ctx.sound.aww(); this.particles.emit(s.x, H * 0.8, a.side * (ZL - 2), { vx: 0, spread: 6, up: 4, color: 0xffffff, size: 0.9, life: 0.6, alpha: 0.7, grav: 14, n: 18 }); } else ctx.sound.thump(0.3);
     if (rd.c.human) s.note = { text: quality === 'crash' ? (left > 70 ? 'wipe-out: spin not finished' : 'wipe-out: still grabbing') : quality === 'sketchy' ? 'sketchy landing' : 'clean landing!', col: quality === 'clean' ? '#7be495' : quality === 'sketchy' ? '#ffc93c' : '#ff8a65', t: 0 };
@@ -458,7 +463,9 @@ class Halfpipe {
     this.guide.show(!!show);
     if (show) {
       const touch = rd.c.type === 'touch', act = touch ? '●' : 'action', lr = touch ? '◀ ▶' : 'left/right';
-      this.guide.tip(ph === 'ready' ? `tap ${act} to drop in` : s.air ? `hold ${lr} to spin, let go to stop · hold ${act}: grab · let go of both before landing` : `tap ${act} as you cross the blue strip at the bottom to pump higher`);
+      const little = helped(rd.c);
+      this.guide.tip(little ? (ph === 'ready' ? 'tap any button to drop in' : s.air ? 'hold any button to spin · let go before you land' : 'you pump by yourself: get ready to spin!')
+        : ph === 'ready' ? `tap ${act} to drop in` : s.air ? `hold ${lr} to spin, let go to stop · hold ${act}: grab · let go of both before landing` : `tap ${act} as you cross the blue strip at the bottom to pump higher`);
       this.guide.bar('en', clamp((s.E - H * 0.7) / (EMAX - H * 0.7), 0, 1), { go: s.E > H + 6, mark: (H - H * 0.7) / (EMAX - H * 0.7), hide: ph === 'ready' });
     }
     if (!rd || !s || !rd.c.human || ph !== 'ride') { this.tags.hide('hp'); return; }
@@ -479,8 +486,8 @@ class Halfpipe {
       const coming = !s.pumped && s.crashT <= 0 && Math.sign(s.q) === -s.dir && Math.abs(s.q) < QT * 0.75;
       const onStrip = Math.abs(s.q) <= PUMP_W && !s.pumped;
       if (s.crashT > 0) html += '<span class="pill" style="--tc:#ff8a65">ouch!</span>';
-      else if (onStrip) html += `<span class="pill big" style="--tc:${Math.sin(tt * 14) > 0 ? '#7be495' : '#fff1d6'}">pump now!</span>`;
-      else if (coming) html += '<span class="pill" style="--tc:#fff1d6">pump at the bottom</span>';
+      else if (onStrip && !helped(rd.c)) html += `<span class="pill big" style="--tc:${Math.sin(tt * 14) > 0 ? '#7be495' : '#fff1d6'}">pump now!</span>`;
+      else if (coming && !helped(rd.c)) html += '<span class="pill" style="--tc:#fff1d6">pump at the bottom</span>';
       y = p.y + 11; z = p.z;
     }
     if (html) { this.tags.set('hp', html); this.tags.place('hp', s.x, y, z); } else this.tags.hide('hp');
@@ -515,6 +522,10 @@ export default {
     { verb: 'Steer', text: 'In the air, <b>hold left</b> or <b>right</b> to spin; let go and the half turn finishes by itself. Hold <b>action</b> to grab. The label over you says how much more spin still fits.' },
     { verb: 'Timing', text: 'Land with the spin finished and the grab let go, or it\'s a wipe-out. Mix your tricks: the judges like variety. Two runs.' },
   ],
+  helpers: {
+    little: 'You <b>pump by yourself</b>. In the air, hold <b>any button</b> to spin, and let go before you land.',
+    kid: 'Pumps count a bit early or late, and the landings forgive an unfinished spin.',
+  },
   better: 'higher',
   resultsDelay: 0.6,
   create: (ctx) => new Halfpipe(ctx),

@@ -10,6 +10,7 @@ import { crowd, banner } from '../props.js';
 import { flagCanvas } from '../flags.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles } from '../fx.js';
+import { fitRhythm, winFor, helped } from '../sizes.js';
 import { clamp, damp, rng, makeNoise2D } from '../util.js';
 
 const R = 1.6;                 // a bottle cap
@@ -298,7 +299,7 @@ class Curling {
     if (this.throwNo >= this.queue.length) { this.scoreEnd(); return; }
     const p = this.cur = this.players[this.queue[this.throwNo]];
     this.aim = 0; this.power = 0; this.powerDir = 1; this.holding = false; this.pathKey = null;
-    this.sweep = { rhythm: new Rhythm({ target: SWEEP_TARGET }), effort: 0, anim: 0 };
+    this.sweep = { rhythm: fitRhythm(new Rhythm({ target: SWEEP_TARGET }), p.c), effort: 0, anim: 0 };
     this.thrown = null;
     this.held = new THREE.Mesh(this.capGeo, p.mats);
     this.held.castShadow = true;
@@ -406,19 +407,31 @@ class Curling {
       if (p && i === p.i) q = e;
       if (this.players[i].c.human && e.some((x) => x.b === 'action' && x.down)) skip = true;
     }
+    // Little curlers: the aim is straight at the middle, any button holds the strength, and the
+    // sweeping happens by itself
+    const little = !!p && p.c.human && helped(p.c);
     if (this.phase === 'aim') {
       const held = ctx.held(p.i);
-      this.aim = clamp(this.aim + ((held.right ? 1 : 0) - (held.left ? 1 : 0)) * 7 * dt, -AIM_MAX, AIM_MAX);
-      if (q.some((e) => e.b === 'action' && e.down)) { this.phase = 'power'; this.t = 0; this.power = 0; this.powerDir = 1; ctx.sound.pop(); this.updatePath(); }
+      if (!little) this.aim = clamp(this.aim + ((held.right ? 1 : 0) - (held.left ? 1 : 0)) * 7 * dt, -AIM_MAX, AIM_MAX);
+      if (q.some((e) => (e.b === 'action' || little) && e.down)) { this.phase = 'power'; this.t = 0; this.power = 0; this.powerDir = 1; ctx.sound.pop(); this.updatePath(); }
       if (this.t > 15) { this.phase = 'power'; this.t = 0; }
     } else if (this.phase === 'power') {
       // the strength meter swings up and down while ACTION is held
-      this.power += this.powerDir * dt / 1.3;
+      // the meter swings more slowly for smaller players
+      const slow = winFor(p.c, 1), held = ctx.held(p.i);
+      this.power += this.powerDir * dt / (1.3 * slow);
       if (this.power >= 1) { this.power = 1; this.powerDir = -1; } else if (this.power <= 0) { this.power = 0; this.powerDir = 1; }
-      if (q.some((e) => e.b === 'action' && !e.down) || this.t > 6) this.release();
+      const letGo = little ? !(held.action || held.left || held.right) : q.some((e) => e.b === 'action' && !e.down);
+      if (letGo || this.t > 6 * slow) this.release();
     } else if (this.phase === 'slide') {
-      for (const e of q) if (e.down && e.b !== 'action') { this.sweep.rhythm.press(e.b, e.t); this.sweep.beat = 0.1; }
-      this.sweep.effort = this.thrown && this.thrown.x < BACK ? clamp(this.sweep.rhythm.effort(now), 0, 1) : 0;
+      if (little) {
+        const s = this.thrown, v = s ? Math.hypot(s.vx, s.vz) : 0;
+        this.sweep.effort = s && s.x < TEE && s.x + (v * v) / (2 * DECEL) < TEE - 2 ? 1 : 0;
+        if (this.sweep.effort) this.sweep.beat = 0.1;
+      } else {
+        for (const e of q) if (e.down && e.b !== 'action') { this.sweep.rhythm.press(e.b, e.t); this.sweep.beat = 0.1; }
+        this.sweep.effort = this.thrown && this.thrown.x < BACK ? clamp(this.sweep.rhythm.effort(now), 0, 1) : 0;
+      }
       this.physics(dt);
       if (this.stones.every((s) => s.vx === 0 && s.vz === 0)) { this.phase = 'settle'; this.t = 0; p.bot?.tap.stop(); }
     } else if (this.phase === 'settle') {
@@ -639,7 +652,8 @@ class Curling {
     this.hudG.classList.toggle('cu-hidden', !show);
     if (!show) return;
     const touch = p.c.type === 'touch';
-    const tip = ph === 'aim' ? `${touch ? '◀ ▶' : 'left/right'} aim: the dots show the path · hold ${touch ? '●' : 'action'} for strength`
+    const tip = helped(p.c) ? (ph === 'aim' ? 'hold any button for strength' : ph === 'power' ? 'let go at the yellow mark' : 'your toothbrush sweeps by itself: watch it go!')
+      : ph === 'aim' ? `${touch ? '◀ ▶' : 'left/right'} aim: the dots show the path · hold ${touch ? '●' : 'action'} for strength`
       : ph === 'power' ? 'let go at the yellow mark to stop on the dots' : `sweep ${touch ? '◀ ▶' : 'left, right'}: the ring shows where it stops`;
     this.hudG.querySelector('.tip').textContent = tip;
     const pw = this.hudG.querySelector('.pw'), sw = this.hudG.querySelector('.sw');
@@ -697,6 +711,10 @@ export default {
     { verb: 'Power', text: 'Hold <b>action</b>: the strength meter swings up and down. Let go at the yellow mark to stop at the end of the dots.' },
     { verb: 'Rhythm', text: 'While it slides, tap <b>left</b> and <b>right</b> in turn to sweep with your toothbrush: it goes further and straighter. In the target, the middle is worth 3, the red ring 2, the blue ring 1.' },
   ],
+  helpers: {
+    little: 'Your cap is <b>aimed for you</b> and you <b>sweep by yourself</b>. Hold <b>any button</b> and let go at the yellow mark.',
+    kid: 'The strength meter swings more slowly, and your sweeping beat is slower.',
+  },
   better: 'higher',
   resultsDelay: 0.6,
   create: (ctx) => new Curling(ctx),

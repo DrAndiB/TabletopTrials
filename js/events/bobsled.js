@@ -9,6 +9,7 @@ import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D } from '../util.js';
 import { hudKit, Card, Guide, Tags, Skipper, beatGauge, fmtTime } from './common.js';
+import { fitRhythm, winFor, helped } from '../sizes.js';
 import { buildTrack, stepSled, autoSteer, phiStar, RT, PUSH } from './bobsled-track.js';
 
 const RUNS_FEW = 2, RUNS_MANY = 1;    // two runs each for one or two crews, one for three or four
@@ -310,7 +311,7 @@ class Bobsled {
       if (this.run < this.runs) { this.run++; this.turn = 0; this.ctx.hud.message('Second run', 'small', '#ffc93c', 1.4); } else { this.finishAll(); return; }
     }
     const cr = this.cur = this.crews[this.turn];
-    this.sl = { s: 0, v: 0, phi: 0, w: 0, wob: 0, rhythm: new Rhythm({ target: TARGET }), pushing: false, inside: false, jumpT: -1, startT: null, time: null, anim: 0, hist: [], note: null };
+    this.sl = { s: 0, v: 0, phi: 0, w: 0, wob: 0, rhythm: fitRhythm(new Rhythm({ target: TARGET }), cr.c), little: cr.c.human && helped(cr.c), kid: cr.c.human && helped(cr.c, 1), pushing: false, inside: false, jumpT: -1, startT: null, time: null, anim: 0, hist: [], note: null };
     if (!cr.bot) this.skipper.update(false, false);
     this.camInit = false;   // cut to the start
     this.phase = 'ready'; this.t = 0;
@@ -368,16 +369,19 @@ class Bobsled {
     if (this.phase === 'ready' || this.phase === 'push') {
       for (const e of q) {
         if (!e.down) continue;
-        if (e.b === 'action') { if (sl.pushing) this.jumpIn(); continue; }
+        if (e.b === 'action' && !sl.little) { if (sl.pushing) this.jumpIn(); continue; }
         const res = sl.rhythm.press(e.b, e.t);
         if (!sl.pushing) { sl.pushing = true; this.phase = 'push'; this.t = 0; ctx.hud.message(''); }
         if (res === 'stumble') { sl.v *= 0.85; ctx.sound.stumble(); } else ctx.sound.step(cr.c.human ? 0.8 : 0.4);
       }
       if (this.phase === 'ready' && this.t > 10) { sl.pushing = true; this.phase = 'push'; }
       if (sl.pushing) {
-        const eff = sl.inside ? 0 : sl.rhythm.effort(now);
+        // a crew that doesn't push gets the sled rolling slowly anyway (nobody waits at the top for ever)
+        const eff = sl.inside ? 0 : Math.max(sl.rhythm.effort(now), cr.c.human && this.t > 5 ? Math.min(0.6, 0.3 + (this.t - 5) * 0.05) : 0);
         if (!sl.inside) sl.v += (VPUSH * eff - sl.v) * (1 - Math.exp(-1.6 * dt));
         sl.s += sl.v * dt;
+        // Little crews jump in by themselves on the green stripe
+        if (sl.little && !sl.inside && sl.s >= PUSH - JUMP_ZONE * 0.6) this.jumpIn();
         if (sl.startT == null && sl.s >= BEAM) sl.startT = now - (sl.s - BEAM) / Math.max(1, sl.v);
         if (sl.s >= PUSH) {
           if (!sl.inside) { this.jumpIn(true); }
@@ -386,7 +390,10 @@ class Bobsled {
       }
     } else if (this.phase === 'run') {
       const held = ctx.held(cr.i);
-      const steer = (held.right ? 1 : 0) - (held.left ? 1 : 0);
+      let steer = (held.right ? 1 : 0) - (held.left ? 1 : 0);
+      // Little crews: the sled mostly steers itself; Kids get a nudge back when they drift well off the line
+      if (sl.little) steer = clamp(steer * 0.5 + autoSteer(sl, 0.15), -1, 1);
+      else if (sl.kid && !steer) steer = autoSteer(sl, 0.3);
       sl.wob = 0.06 * this.noise.noise(sl.s * 0.05, cr.i * 7);
       stepSled(this.track, sl, dt, steer);
       sl.hist.push({ s: sl.s, v: sl.v, phi: sl.phi, star: sl.star });
@@ -410,7 +417,7 @@ class Bobsled {
     sl.inside = true; sl.jumpT = 0;
     const left = PUSH - sl.s;
     // jumping in too early loses the rest of the push; missing the end of the zone is a clumsy scramble
-    if (late) { sl.v *= 0.9; sl.note = { text: 'late jump: slow!', col: '#ff8a65', t: 0 }; } else if (left <= JUMP_ZONE) { sl.v *= 1.04; sl.note = { text: 'perfect jump-in!', col: '#7be495', t: 0 }; } else sl.note = { text: `early jump: ${Math.round(left - JUMP_ZONE)} cm of push lost`, col: '#ffc93c', t: 0 };
+    if (late) { sl.v *= 0.9; sl.note = { text: 'late jump: slow!', col: '#ff8a65', t: 0 }; } else if (left <= winFor(cr.c, JUMP_ZONE)) { sl.v *= 1.04; sl.note = { text: 'perfect jump-in!', col: '#7be495', t: 0 }; } else sl.note = { text: `early jump: ${Math.round(left - JUMP_ZONE)} cm of push lost`, col: '#ffc93c', t: 0 };
     cr.bot?.tap.stop();
     ctx.sound.thump(0.4);
   }
@@ -539,7 +546,8 @@ class Bobsled {
     if (!show) { this.tags.hide('bs'); return; }
     const touch = cr.c.type === 'touch';
     const act = touch ? '●' : 'action', lr = touch ? '◀ ▶' : 'left, right';
-    this.guide.tip(ph === 'run' ? `hold ${lr} to keep the sled on the red line (the dot in the green)` : `tap ${lr} in turn to push · tap ${act} on the green stripe to jump in`);
+    this.guide.tip(sl.little ? (ph === 'run' ? 'the sled steers itself: lean on left or right if you like' : 'tap any button on a steady beat to push: you jump in by yourself')
+      : ph === 'run' ? `hold ${lr} to keep the sled on the red line (the dot in the green)` : `tap ${lr} in turn to push · tap ${act} on the green stripe to jump in`);
     const e = clamp(sl.v / 45, 0, 1);
     this.guide.bar('sp', e, { go: e > 0.75 });
     const map = (a) => clamp(0.5 + a / 2.8, 0, 1);
@@ -549,10 +557,10 @@ class Bobsled {
     const note = sl.note && sl.note.t < 1.4 ? `<span class="pill" style="--tc:${sl.note.col}">${sl.note.text}</span><br>` : '';
     let html = note;
     if (!sl.inside && ph !== 'run') {
-      const inZone = sl.s >= PUSH - JUMP_ZONE;
-      const toGo = Math.max(0, PUSH - JUMP_ZONE - sl.s);
-      html += inZone ? `<span class="pill big" style="--tc:#7be495">jump in now! (${act})</span>`
-        : `<span class="pill" style="--tc:#fff1d6">push! green stripe in ${Math.ceil(toGo)} cm</span><br>${beatGauge(sl.rhythm.cadence(this.ctx.time()) / TARGET)}`;
+      const zw = winFor(cr.c, JUMP_ZONE), inZone = sl.s >= PUSH - zw;
+      const toGo = Math.max(0, PUSH - zw - sl.s);
+      html += inZone && !sl.little ? `<span class="pill big" style="--tc:#7be495">jump in now! (${act})</span>`
+        : `<span class="pill" style="--tc:#fff1d6">push! green stripe in ${Math.ceil(toGo)} cm</span><br>${beatGauge(sl.rhythm.ratio(this.ctx.time()))}`;
     }
     if (html) {
       this.tags.set('bs', html);
@@ -621,6 +629,10 @@ export default {
     { verb: 'Timing', text: 'Tap <b>action</b> to jump in, as late as you dare before the push zone ends.' },
     { verb: 'Steer', text: 'Hold <b>left</b> or <b>right</b> to keep the sled on the <b>red line</b>: left alone it swings up too high in the bends. Two runs each with one or two crews (times add up), one run with more.' },
   ],
+  helpers: {
+    little: 'Tap <b>any button</b> on a steady beat to push. You <b>jump in by yourself</b>, and the sled <b>steers itself</b>.',
+    kid: 'A slower push beat, more time to jump in, and the sled steers back if it drifts far off the red line.',
+  },
   better: 'lower',
   resultsDelay: 0.6,
   create: (ctx) => new Bobsled(ctx),

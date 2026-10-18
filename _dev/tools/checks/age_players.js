@@ -6,6 +6,9 @@
 (async () => {
   const g = __tt.game, prm = new URLSearchParams(location.search);
   const { EVENTS } = await import('/js/events/index.js');
+  const { SIZES } = await import('/js/sizes.js');
+  // each age plays at its size (sized=0: everyone plays Big, as before the sizes)
+  const SIZE = prm.get('sized') === '0' ? { 4: 'big', 7: 'big', 12: 'big' } : { 4: 'little', 7: 'kid', 12: 'big' };
   const AGES = {
     4: { maxRate: 3.0, cv: 0.3, same: 0.12, lapse: [6, 0.8], rt: [0.75, 0.2], ant: 0.22, hold: 0.25, steer: [0.6, 0.25], rules: 0.3, ruleDelay: 0.6, miss: 0.2, aim: 4 },
     7: { maxRate: 4.5, cv: 0.18, same: 0.04, lapse: [15, 0.4], rt: [0.45, 0.1], ant: 0.11, hold: 0.12, steer: [0.35, 0.14], rules: 0.75, ruleDelay: 0.25, miss: 0.05, aim: 2 },
@@ -17,15 +20,15 @@
   const rnd = Math.random;
   const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
 
-  function player(P, pad) {
-    const S = {};
+  function player(P, pad, size) {
+    const S = {}, beat = SIZES[size].beat;
     const set = (b, d) => { if (pad.held[b] !== d) pad.push(b, d, g.time); };
     const tap = (b) => { pad.push(b, true, g.time); pad.push(b, false, g.time + 0.04); };
     const rt = () => Math.max(0.15, P.rt[0] + gauss() * P.rt[1]);
     const T = { next: 0, side: 'left', lapseUntil: 0, nextLapse: P.lapse[0] ? 2 + rnd() * P.lapse[0] : Infinity };
     // alternate left/right at a cadence, with jitter, wrong-side slips and lapses of attention
     const taps = (target) => {
-      const t = g.time, cad = Math.min(P.maxRate, target);
+      const t = g.time, cad = Math.min(P.maxRate, target * beat);
       if (t > T.nextLapse) { T.lapseUntil = t + P.lapse[1] * (0.6 + 0.8 * rnd()); T.nextLapse = T.lapseUntil + P.lapse[0] * (0.5 + rnd()); }
       if (t < T.lapseUntil) return;
       if (!T.next) T.next = t;
@@ -46,7 +49,7 @@
     };
     const rule = (key) => { if (S['r_' + key] == null) S['r_' + key] = rnd() < P.rules; return S['r_' + key]; };
     const forget = (key) => { delete S['r_' + key]; };
-    return { S, set, tap, rt, taps, steer, rule, forget, P };
+    return { S, set, tap, rt, taps, steer, rule, forget, P, size };
   }
 
   // one policy per event: what a kid of this age does on each step
@@ -190,7 +193,7 @@
       const h = A.S.h;
       if (ev.phase === 'ready' && g.time >= h.start && !h.drop) { h.drop = true; A.tap('action'); }
       if (ev.phase !== 'ride' || !s) return;
-      const share = A.P.rules > 0.9 ? 0.8 : A.P.rules > 0.5 ? 0.45 : 0;
+      const share = A.size === 'little' ? 0.4 : A.P.rules > 0.9 ? 0.8 : A.P.rules > 0.5 ? 0.45 : 0;
       if (!s.air) {
         if (h.plan) { A.set('left', false); A.set('right', false); A.set('action', false); h.n++; h.plan = null; }
         if (h.pumpAt == null && Math.abs(s.q) < 11 && Math.sign(s.q) !== s.dir) h.pumpAt = rnd() < 1 - A.P.miss ? Math.abs(gauss() * A.P.ant * (s.v || 30)) : -1;
@@ -242,11 +245,11 @@
     const def = EVENTS.find((e) => e.id === id);
     const line = [id];
     for (const age of ages) for (const skill of skills) {
-      const comps = g.competitors.map((c, i) => (i ? { ...c, type: 'cpu', human: false } : { ...c, type: 'keys', human: true }));
+      const comps = g.competitors.map((c, i) => (i ? { ...c, type: 'cpu', human: false } : { ...c, type: 'keys', human: true, size: SIZE[age] }));
       captured = null;
       await g.load(def, comps, { skill, seed: 7 });
       g.start();
-      const A = player(AGES[age], g.competitors[0].pad);
+      const A = player(AGES[age], g.competitors[0].pad, SIZE[age]);
       const pol = POLICY[id];
       let guard = 0;
       while (!captured && guard++ < 120 * 700) { pol(g.ev, A); g.simulate(1 / 120); }

@@ -2,6 +2,7 @@
 // at the bottom (a tip and a few bars), labels pinned over things in the scene, and the start of a race
 // (take your marks, hold action, let go on the whistle).
 import * as THREE from '../../vendor/three.bundle.js';
+import { helped } from '../sizes.js';
 import { clamp } from '../util.js';
 
 export const ORD = ['1st', '2nd', '3rd', '4th'];
@@ -127,7 +128,7 @@ export class RaceStart {
   }
   // the text for the centre message
   marksText() {
-    const humans = this.racers.filter((ru) => ru.c.human);
+    const humans = this.racers.filter((ru) => ru.c.human && !helped(ru.c));
     if (!humans.length) return 'Take your marks';
     return `Take your marks · hold ${humans.every((ru) => ru.c.type === 'touch') ? '●' : 'action'}`;
   }
@@ -152,6 +153,9 @@ export class RaceStart {
         if (ru.botGo != null && now >= ru.botGo) this.go(ru, ru.botGo);
         continue;
       }
+      // Little players go by themselves on the whistle; anyone still standing after a while goes too
+      if (this.phase === 'go' && (helped(ru.c) ? now >= this.whistleAt + 0.3 : now >= this.whistleAt + 12)) { this.go(ru, now); continue; }
+      if (helped(ru.c)) continue;
       for (let k = 0; k < evs.length; k++) {
         const e = evs[k];
         if (this.phase === 'marks') {

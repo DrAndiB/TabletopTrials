@@ -5,6 +5,7 @@ import * as THREE from '../../vendor/three.bundle.js';
 import { Figurine, POSES, REST, blendPose } from '../figurine.js';
 import { crowd, banner } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
+import { fitRhythm, winFor, helped } from '../sizes.js';
 import { Particles } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
 import { hudKit, Guide, Tags, RaceStart, fmtTime, beatGauge, ORD } from './common.js';
@@ -71,7 +72,7 @@ class Swimming {
       const z = -W / 2 + LANE_W * (lane + 0.5);
       this.swimmers.push({
         c, i, fig, z, lane, x: 0, dir: 1, lap: 0, v: 0, air: 1, breathT: -1, gaspT: 0, turn: null, armed: false,
-        rhythm: new Rhythm({ target: TARGET }), effort: 0, anim: this.r(), finished: false, time: null, notes: [],
+        rhythm: fitRhythm(new Rhythm({ target: TARGET }), c), little: c.human && helped(c), autoTurn: c.human && helped(c, 1), effort: 0, anim: this.r(), finished: false, time: null, notes: [],
         bot: c.human ? null : { tap: new BotTapper(c.pad, rng(c.seed * 31 + 7)), next: 0 },
       });
     });
@@ -233,7 +234,7 @@ class Swimming {
     const q = this.swimmers.map((s) => ctx.presses(s.i));
     if (this.phase === 'pre') return;
     if (this.phase === 'done') { if (this.t > 1.2 && this.results) { const r = this.results; this.results = null; ctx.finish(r); } return; }
-    for (const s of this.swimmers) if (s.bot) this.botUpdate(s, now);
+    for (const s of this.swimmers) if (s.bot) this.botUpdate(s, now); else if (s.c.human) this.assist(s, now);
     const left = this.startCtl.update(dt, now, q);
     if (this.phase === 'marks' && this.startCtl.phase === 'go') { this.phase = 'race'; this.t = 0; }
     for (const s of this.swimmers) {
@@ -267,7 +268,7 @@ class Swimming {
     // presses: strokes, breaths and the turn
     for (const e of evs) {
       if (!e.down) continue;
-      if (e.b === 'action') {
+      if (e.b === 'action' && !s.little) {
         if (s.lap === 0 && s.dir > 0 && s.x >= TURN_ZONE[0] && s.x <= TURN_ZONE[1] && !s.turn) { s.armed = true; if (s.c.human) ctx.sound.pop(); } else this.breathe(s, e.t);
         continue;
       }
@@ -279,8 +280,9 @@ class Swimming {
     if (s.turn) { this.stepTurn(s, dt); return; }
     // air runs out faster the harder you swim; with no air left you splutter and slow right down
     // thrashing well above the beat just splashes: no faster, a little slower
-    const x = s.rhythm.cadence(now) / TARGET;
-    const eff = s.rhythm.effort(now) * (x > 1.2 ? Math.max(0.86, 1 - (x - 1.2) * 0.3) : 1);
+    const x = s.rhythm.ratio(now), th = 1 + winFor(s.c, 0.2);
+    let eff = s.rhythm.effort(now) * (x > th ? Math.max(0.86, 1 - (x - th) * 0.3) : 1);
+    if (s.paddle) eff = Math.max(eff, s.paddle);
     s.effort = eff;
     s.air = Math.max(0, s.air - (DRAIN[0] + DRAIN[1] * eff) * dt);
     if (s.air <= 0 && s.gaspT <= 0) { s.gaspT = 1.2; s.air = 0.55; s.notes.push('gasp'); ctx.hud.flash(`${s.c.short}: out of air!`, '#ff8a65'); this.splash(s.x, s.z, 10); }
@@ -322,6 +324,19 @@ class Swimming {
     if (s.c.human) { this.ctx.sound.puff(0.25); this.tagFlash(s, was < 0.35 ? 'good breath' : 'breath', was < 0.35 ? '#7be495' : '#fff1d6'); }
   }
 
+  // helpers: Little swimmers breathe and turn by themselves, Kids turn by themselves; anyone still in
+  // the water a while after the winner paddles home
+  assist(s, now) {
+    if (!s.swimming || s.finished || s.turn) return;
+    const first = this.swimmers.find((o) => o.finished && o.place === 0);
+    const late = first ? now - this.startCtl.whistleAt - first.time - 6 : now - this.startCtl.whistleAt - 45;
+    s.paddle = late > 0 ? Math.min(0.8, 0.4 + late * 0.06) : 0;
+    if (s.paddle) s.paddled = true;
+    const auto = s.little || s.paddle;
+    if (auto && s.air < 0.3 && s.breathT < 0 && !(s.dir > 0 && s.x > TURN_ZONE[0] - 4 && s.lap === 0)) this.breathe(s, now);
+    if ((s.autoTurn || auto) && s.lap === 0 && s.dir > 0 && !s.armed && s.x > TURN_ZONE[0] + 3) { s.armed = true; this.ctx.sound.pop(); }
+  }
+
   tagFlash(s, text, col) { s.flash = text; s.flashC = col; s.flashT = 0.8; }
 
   touchFinish(s, t) {
@@ -346,6 +361,7 @@ class Swimming {
       const g = s.notes.filter((n) => n === 'gasp').length;
       if (g) notes.push(g > 1 ? `ran out of air ${g} times` : 'ran out of air');
       if (s.notes.includes('touch turn')) notes.push('touch turn');
+      if (s.paddled) notes.push('paddled home');
       return s.finished
         ? { value: s.time, text: fmtTime(s.time), short: fmtTime(s.time), sub: notes.join(' · ') }
         : { value: null, dnf: true, text: 'Did not finish', short: 'DNF', sub: '' };
@@ -442,8 +458,9 @@ class Swimming {
       const touch = humans.every((s) => s.c.type === 'touch');
       const a = touch ? '●' : 'action', lr = touch ? '◀ ▶' : 'left, right';
       const h = humans.find((s) => !s.finished) || humans[0];
-      this.guide.tip(ph === 'marks' ? `hold ${a} on the soap, let go on the whistle`
-        : h.lap === 0 && h.x > TURN_ZONE[0] - 30 ? `tap ${a} over the green tiles: tumble turn!`
+      this.guide.tip(h.little ? (ph === 'marks' ? 'you dive by yourself on the whistle' : 'tap any button on a steady beat: you breathe and turn by yourself')
+        : ph === 'marks' ? `hold ${a} on the soap, let go on the whistle`
+          : h.lap === 0 && h.x > TURN_ZONE[0] - 30 ? (h.autoTurn ? 'you turn by yourself at the green tiles' : `tap ${a} over the green tiles: tumble turn!`)
           : `tap ${lr} in turn to swim · ${a} to breathe`);
     }
     // over each human swimmer: name, the stroke beat, the air left, and what to do next
@@ -457,12 +474,12 @@ class Swimming {
       const zone = s.lap === 0 && s.dir > 0 && s.x >= TURN_ZONE[0] && s.x <= TURN_ZONE[1] && !s.armed && !s.turn;
       let pill = '';
       if (s.flashT > 0) pill = `<span class="pill" style="--tc:${s.flashC}">${s.flash}</span><br>`;
-      else if (zone) pill = `<span class="pill big" style="--tc:${blink ? '#7be495' : '#fff1d6'}">tap now: turn!</span><br>`;
+      else if (zone && !s.autoTurn) pill = `<span class="pill big" style="--tc:${blink ? '#7be495' : '#fff1d6'}">tap now: turn!</span><br>`;
       else if (s.armed) pill = '<span class="pill" style="--tc:#7be495">tumble turn ready</span><br>';
-      else if (ahead) pill = '<span class="pill" style="--tc:#fff1d6">green tiles ahead</span><br>';
+      else if (ahead && !s.autoTurn) pill = '<span class="pill" style="--tc:#fff1d6">green tiles ahead</span><br>';
       else if (s.gaspT > 0) pill = '<span class="pill" style="--tc:#ff8a65">out of air!</span><br>';
       else if (low && s.swimming) pill = `<span class="pill big" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">breathe!</span><br>`;
-      const beat = s.swimming && !s.turn ? beatGauge(s.rhythm.cadence(this.ctx.time()) / TARGET) : '';
+      const beat = s.swimming && !s.turn ? beatGauge(s.rhythm.ratio(this.ctx.time())) : '';
       this.tags.set(key, `${pill}${s.c.short}<div class="sw-row">air<span class="sw-air${low ? ' low' : ''}"><i style="width:${(s.air * 100).toFixed(0)}%"></i></span></div>${beat}`);
       const hx = s.swimming || s.dive ? s.x : -2.2;
       this.tags.place(key, hx, (s.swimming ? WY : this.blockY + 9) + 6, s.z);
@@ -508,6 +525,10 @@ export default {
     { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn for the arm strokes. Keep the beat needle over your swimmer in the green: steady beats fast.' },
     { verb: 'Timing', text: 'Tap <b>action</b> to breathe before your air runs out. Over the <b>green tiles</b> at the far end, tap <b>action</b> for a tumble turn.' },
   ],
+  helpers: {
+    little: 'You dive, <b>breathe</b> and <b>turn</b> by yourself. Just tap <b>any button</b> on a slow, steady beat to swim.',
+    kid: 'You <b>turn</b> by yourself at the far end. Your beat is a bit slower.',
+  },
   better: 'lower',
   resultsDelay: 1.6,
   create: (ctx) => new Swimming(ctx),

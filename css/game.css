@@ -105,7 +105,7 @@ body[data-screen="none"] #btn-pause { display: grid; }
 /* teams */
 .team-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 @media (max-width: 520px) { .team-list { grid-template-columns: 1fr; } }
-.team { border: var(--line) solid var(--ink); border-radius: 14px; background: var(--paper); padding: 8px 10px 10px; box-shadow: 0 3px 0 var(--ink); display: grid; grid-template-columns: 76px 1fr; grid-template-rows: auto auto auto; column-gap: 10px; row-gap: 4px; position: relative; }
+.team { border: var(--line) solid var(--ink); border-radius: 14px; background: var(--paper); padding: 21px 10px 10px; box-shadow: 0 3px 0 var(--ink); display: grid; grid-template-columns: 76px 1fr; grid-template-rows: auto auto auto; column-gap: 10px; row-gap: 4px; position: relative; }
 .team-flag { grid-row: 1 / 3; width: 76px; height: 52px; padding: 0; border: 2px solid var(--ink); border-radius: 6px; background: #ddd center / cover no-repeat; box-shadow: 0 2px 0 var(--ink); }
 .team-flag:hover { transform: translateY(-1px); }
 .team-name { font-family: var(--display); font-size: 19px; line-height: 1.1; align-self: end; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -115,7 +115,11 @@ body[data-screen="none"] #btn-pause { display: grid; }
 .team-hint kbd { font-size: 11px; }
 .team.off { opacity: .55; }
 .team.off .team-flag { filter: grayscale(1); }
-.team .pnum { position: absolute; right: 10px; bottom: 8px; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
+.team-size { grid-column: 1 / 3; margin-top: 2px; display: flex; }
+.team-size button { flex: 1; padding: 3px 4px; font-size: 13px; line-height: 1.1; white-space: nowrap; }
+.team-size button small { display: block; font-weight: 600; opacity: .7; font-size: 10.5px; }
+.chip-size { font: 800 10px/1 Rubik, sans-serif; text-transform: uppercase; letter-spacing: .05em; background: #7be495; border: 2px solid var(--ink); border-radius: 999px; padding: 2px 6px; margin-left: 2px; }
+.team .pnum { position: absolute; right: 10px; top: 5px; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
 .warn { background: #fff0c2; border: 2px solid var(--ink); border-radius: 10px; padding: 8px 10px; font-size: 13px; margin: 10px 0 0; }
 
 /* events */
@@ -177,6 +181,8 @@ body[data-screen="none"] #btn-pause { display: grid; }
 .intro-panel h2 { font-size: 44px; }
 .intro-venue { margin: 2px 0 12px; color: var(--ink-2); font-size: 15px; }
 .intro-how { display: grid; gap: 8px; text-align: left; }
+.intro-how .how.help { background: #eafbe9; padding: 5px 12px; font-size: .93em; }
+.intro-how .how.help .verb { background: #7be495; color: var(--ink); height: 28px; }
 .how { display: grid; grid-template-columns: 54px 1fr; align-items: center; gap: 12px; background: var(--paper); border: 2px solid var(--ink); border-radius: 12px; padding: 8px 12px; }
 .how .verb { display: grid; place-items: center; width: 54px; height: 38px; border-radius: 10px; background: var(--ink); color: var(--yellow); font-family: var(--display); font-size: 13px; letter-spacing: .03em; text-transform: uppercase; }
 .how b { font-weight: 800; }

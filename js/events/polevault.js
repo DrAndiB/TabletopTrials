@@ -8,7 +8,8 @@ import { crowd, banner, floorMaterial } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D } from '../util.js';
-import { hudKit, Card, Guide, Tags, Skipper } from './common.js';
+import { fitRhythm, winFor, helped, sizeOf } from '../sizes.js';
+import { hudKit, Card, Guide, Tags, Skipper, beatGauge } from './common.js';
 
 const U = 4.75;                 // units per metre (a figurine is a 1.75 m vaulter)
 const BOX_X = -2;               // where the straw plants
@@ -21,7 +22,10 @@ const SWING_T = 1.05;
 const PUSH_U = 0.7;             // the moment in the swing to let go: the straw stands upright
 const PUSH_W = 0.22;            // how far either side of it still gives some push
 const G = 30;
-const START_H = 4.8, STEP = 0.2, MISSES = 2;
+const START_H = 4.8, STEP = 0.2, MISSES = 2, TOP_H = 6.79;
+// everyone has their own bar: smaller players open lower and go up 40 cm at a time below the grown-up opening height
+const OPEN = { little: 3.2, kid: 4.0, big: START_H };
+const nextBar = (h) => Math.round((h + (h < START_H - 0.01 ? 0.4 : STEP)) * 100) / 100;
 const SEGS = 16;
 const BOT = {
   easy: { cad: 0.86, plant: 3.2, push: 0.13 },
@@ -78,6 +82,7 @@ class PoleVault {
       K.group.add(straw);
       this.vaulters.push({
         c, i, fig, straw, segs, best: null, marks: [], missesHere: 0, out: false, idle: this.r() * 10,
+        bar: OPEN[sizeOf(c).id] ?? START_H, little: c.human && helped(c),
         home: { x: RUN_X - 12 - (i % 2) * 7, z: -14 - i * 5 },
         bot: c.human ? null : { tap: new BotTapper(c.pad, rng(c.seed * 19 + 1)) },
       });
@@ -200,21 +205,20 @@ class PoleVault {
   // the order at a height: everyone still in who hasn't cleared it; a first miss goes to the back
   next() {
     const ctx = this.ctx;
+    // a round: everyone still in jumps once, each at their own bar
     if (!this.queue.length) {
       const left = this.vaulters.filter((v) => !v.out);
-      if (!left.length || this.bar >= 6.79) { this.finishAll(); return; }
-      this.setBar(Math.round((this.bar + STEP) * 100) / 100);
-      for (const v of left) v.missesHere = 0;
+      if (!left.length) { this.finishAll(); return; }
       this.queue = left.slice();
-      ctx.hud.message(`Bar up: ${fmtH(this.bar)}`, 'small', '#ffc93c', 1.6);
-      ctx.sound.clack(0);
     }
     const v = this.cur = this.queue.shift();
-    this.va = { x: RUN_X, v: 0, rhythm: new Rhythm({ target: TARGET }), started: false, anim: 0, plantQ: null, pushQ: null, planted: false, u: 0, note: null };
+    if (v.bar !== this.bar) { this.setBar(v.bar); ctx.sound.clack(0); }
+    this.va = { x: RUN_X, v: 0, rhythm: fitRhythm(new Rhythm({ target: TARGET }), v.c), started: false, anim: 0, plantQ: null, pushQ: null, planted: false, u: 0, note: null };
     if (!v.bot) this.skipper.update(false, false);
     this.phase = 'ready'; this.t = 0;
     this.placeWaiting();
     v.fig.setExpression('focus');
+    if (v.little) v.autoPlant = IDEAL + 1 + this.r.gauss() * 2.5;
     if (v.bot) { const B = BOT[this.ctx.skillName] || BOT.normal; v.bot.go = 0.4 + this.r() * 0.4; v.bot.started = false; v.bot.plantAt = IDEAL + this.r.gauss() * B.plant; v.bot.pushAt = PUSH_U + this.r.gauss() * B.push; }
     ctx.competitors.forEach((c, i) => ctx.hud.chip(i, this.vaulters[i].best != null ? fmtH(this.vaulters[i].best) : this.vaulters[i].out ? 'out' : '', i === v.i ? 'active' : ''));
     if (v.c.human) ctx.hud.message(`${v.c.short}: ${fmtH(this.bar)} · ${v.c.type === 'touch' ? 'tap ◀ ▶' : 'tap left, right'} to run`, 'small', '#fff');
@@ -254,7 +258,7 @@ class PoleVault {
     if (a.note) a.note.t += dt;
     if (this.phase === 'ready' || this.phase === 'run') {
       for (const e of q) {
-        if (e.b === 'action') { if (e.down && a.started) { this.plant(); break; } continue; }
+        if (e.b === 'action' && !v.little) { if (e.down && a.started) { this.plant(); break; } continue; }
         if (!e.down) continue;
         const res = a.rhythm.press(e.b, e.t);
         if (!a.started) { a.started = true; this.phase = 'run'; this.t = 0; ctx.hud.message(''); }
@@ -265,12 +269,14 @@ class PoleVault {
         const eff = a.rhythm.effort(now);
         a.v += (VMAX * eff - a.v) * (1 - Math.exp(-(VMAX * eff > a.v ? ACCEL : 1.2) * dt));
         a.x += a.v * dt;
+        if (v.little && a.x >= v.autoPlant) { this.plant(); return; }
         if (a.x > BOX_X - 5) { this.miss('Ran through!'); return; }
       }
     } else if (this.phase === 'swing') {
       // holding on through the swing; letting go is the push off the top of the straw
       a.u += dt / SWING_T;
-      const let_go = q.some((e) => e.b === 'action' && !e.down) || !ctx.held(v.i).action;
+      // a Little vaulter taps any button to push off (taps from the run-up don't count)
+      const let_go = v.little ? a.u > 0.35 && q.some((e) => e.down) : q.some((e) => e.b === 'action' && !e.down) || !ctx.held(v.i).action;
       if ((let_go && a.u > 0.06) || a.u >= 1.15) this.release();
     } else if (this.phase === 'air') {
       a.vy -= G * dt; a.cx += a.vx * dt; a.cy += a.vy * dt; a.airT += dt;
@@ -290,7 +296,7 @@ class PoleVault {
     a.planted = true;
     // the best plant is in the middle of the tape; the straw can't reach from far back
     const off = a.x - IDEAL;
-    a.plantQ = clamp(1 - Math.abs(off) / 9, 0.15, 1);
+    a.plantQ = clamp(1 - Math.abs(off) / winFor(v.c, 9), 0.15, 1);
     if (a.x < ZONE[0] - 10) a.plantQ = 0.1;
     a.px = a.x; a.speed = a.v; a.relU = null;
     this.phase = 'swing'; this.t = 0; a.u = 0;
@@ -301,7 +307,7 @@ class PoleVault {
   release() {
     const a = this.va, v = this.cur, ctx = this.ctx;
     a.relU = Math.min(1, a.u);
-    a.pushQ = clamp(1 - Math.abs(a.relU - PUSH_U) / PUSH_W, 0, 1);
+    a.pushQ = clamp(1 - Math.abs(a.relU - PUSH_U) / winFor(v.c, PUSH_W), 0, 1);
     if (v.c.human) a.note = { text: a.pushQ > 0.75 ? 'great push!' : a.relU < PUSH_U ? 'let go early' : 'let go late', col: a.pushQ > 0.75 ? '#7be495' : a.pushQ > 0.35 ? '#ffc93c' : '#ff8a65', t: 0 };
     // how high the body goes: speed into the straw, the plant, the push
     const e = (a.speed / VMAX) ** 2;
@@ -333,6 +339,8 @@ class PoleVault {
     this.particles.emit(a.cx, 9, 0, { vx: 0, spread: 6, up: 3, color: 0xffffff, size: 0.8, life: 0.5, alpha: 0.5, grav: 8, n: 10 });
     if (a.clear) {
       v.best = this.bar; v.marks.push('O'); v.missesHere = 0;
+      v.bar = nextBar(v.bar);
+      if (v.bar > TOP_H) v.out = true;   // the rulers don't go any higher
       ctx.hud.message(`${fmtH(this.bar)} cleared!`, '', '#7be495');
       ctx.sound.cheer(1); ctx.sound.clap(8);
       v.fig.setExpression('wow');
@@ -353,7 +361,7 @@ class PoleVault {
   missMark(why) {
     const v = this.cur, ctx = this.ctx;
     v.marks.push('X'); v.missesHere++;
-    if (v.missesHere >= MISSES) { v.out = true; ctx.hud.message(`${why} · out at ${fmtH(this.bar)}`, 'small', '#ff8a65'); } else { this.queue.push(v); ctx.hud.message(`${why} · one more go`, 'small', '#ff8a65'); }
+    if (v.missesHere >= MISSES) { v.out = true; ctx.hud.message(`${why} · ${v.best != null ? `best ${fmtH(v.best)}` : `out at ${fmtH(this.bar)}`}`, 'small', '#ff8a65'); } else ctx.hud.message(`${why} · one more go next round`, 'small', '#ff8a65');
     ctx.sound.aww();
     v.fig.setExpression('sad');
     this.updateCard();
@@ -511,7 +519,8 @@ class PoleVault {
     this.guide.show(!!show);
     if (show) {
       const touch = v.c.type === 'touch', act = touch ? '●' : 'action';
-      this.guide.tip(ph === 'swing' ? `keep holding ${act}, let go when the needle is in the green` : a.x > ZONE[0] - 30 ? `on the green tape: press and hold ${act} to plant` : `tap ${touch ? '◀ ▶' : 'left, right'} in turn to run`);
+      this.guide.tip(v.little ? (ph === 'swing' ? 'tap any button when the needle is in the green' : 'tap any button on a steady beat: the straw goes in by itself')
+        : ph === 'swing' ? `keep holding ${act}, let go when the needle is in the green` : a.x > ZONE[0] - 30 ? `on the green tape: press and hold ${act} to plant` : `tap ${touch ? '◀ ▶' : 'left, right'} in turn to run`);
       const e = clamp(a.v / VMAX, 0, 1);
       this.guide.bar('sp', e, { go: e > 0.9 });
     }
@@ -520,20 +529,22 @@ class PoleVault {
     const note = a.note && a.note.t < 0.9 ? `<span class="pill" style="--tc:${a.note.col}">${a.note.text}</span><br>` : '';
     if (ph === 'swing') {
       // the let-go gauge: a half dial, the needle sweeping round with the swing
-      const u = clamp(a.u / 1.15, 0, 1), lo = (PUSH_U - 0.09) / 1.15, hi = (PUSH_U + 0.09) / 1.15;
+      const pw = winFor(v.c, 0.09), u = clamp(a.u / 1.15, 0, 1), lo = (PUSH_U - pw) / 1.15, hi = Math.min(1, (PUSH_U + pw) / 1.15);
       const arcPt = (k) => `${(-Math.cos(Math.PI * k) * 40).toFixed(1)} ${(-Math.sin(Math.PI * k) * 40).toFixed(1)}`;
-      const inZone = a.u >= PUSH_U - 0.09 && a.u <= PUSH_U + 0.09;
+      const inZone = a.u >= PUSH_U - pw && a.u <= PUSH_U + pw;
       const nd = arcPt(u);
       const svg = `<svg width="104" height="60" viewBox="-52 -50 104 60"><path d="M-40 0 A40 40 0 0 1 40 0" fill="none" stroke="#fff1d6" stroke-width="12"/><path d="M${arcPt(lo)} A40 40 0 0 1 ${arcPt(hi)}" fill="none" stroke="#2fae5a" stroke-width="12"/><path d="M-40 0 A40 40 0 0 1 40 0" fill="none" stroke="#1f1a17" stroke-width="2.5" transform="scale(1.16)"/><line x1="0" y1="0" x2="${nd.split(' ')[0]}" y2="${nd.split(' ')[1]}" stroke="#1f1a17" stroke-width="5" stroke-linecap="round"/><circle r="5" fill="#1f1a17"/></svg>`;
-      this.tags.set('pv', `${note}${svg}<br><span class="pill big" style="--tc:${inZone ? '#7be495' : '#fff1d6'}">${inZone ? 'let go!' : a.u < PUSH_U ? 'hold…' : 'too late!'}</span>`);
+      this.tags.set('pv', `${note}${svg}<br><span class="pill big" style="--tc:${inZone ? '#7be495' : '#fff1d6'}">${inZone ? (v.little ? 'tap now!' : 'let go!') : a.u < PUSH_U ? (v.little ? 'wait…' : 'hold…') : 'too late!'}</span>`);
       const hd = this.handsAt(a.u);
       this.tags.place('pv', hd.x - 14, hd.y + 2, 0, 'center');
     } else if (ph === 'run' || ph === 'ready') {
       // the plant ring: it closes on the runner's feet as they reach the best spot on the tape
-      const d = IDEAL - a.x, near = d < 34 && d > -10 && !a.planted;
-      const good = Math.abs(d) < 3;
+      const d = IDEAL - a.x, near = d < 34 && d > -10 && !a.planted && !v.little;
+      const good = Math.abs(d) < winFor(v.c, 3);
       const pill = near ? `<span class="pill${good ? ' big' : ''}" style="--tc:${good ? '#7be495' : '#fff1d6'}">${good ? 'plant now: hold!' : d > 0 ? 'plant when the ring closes' : 'plant!'}</span>` : '';
-      this.tags.set('pv', `${note}${pill}`);
+      // until the tape is close: how the run-up beat is going
+      const beat = !near && a.started ? beatGauge(a.rhythm.ratio(this.ctx.time())) : '';
+      this.tags.set('pv', `${note}${pill}${beat}`);
       this.tags.place('pv', a.x, 13, 0);
       if (near) {
         const rr = 14 + Math.min(40, Math.abs(d) * 1.4);
@@ -570,8 +581,12 @@ export default {
   how: [
     { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to run up: faster run, higher jump.' },
     { verb: 'Timing', text: 'On the <b>green tape</b>, press and <b>hold action</b> to plant the straw. Keep holding, and <b>let go</b> when the needle beside you is in the green: that pushes you off the top.' },
-    { verb: 'Timing', text: 'The bar goes up 20 cm each round. Two misses at a height and you\'re out. The best height wins.' },
+    { verb: 'Timing', text: 'Everyone has their own bar: it goes up each time you clear it (20 cm from 4.80 m). Two misses at a height and you\'re out. The best height wins.' },
   ],
+  helpers: {
+    little: 'Tap <b>any button</b> on a steady beat to run: the straw goes in <b>by itself</b>. Then tap when the needle is in the green. Your bar starts at 3.20 m.',
+    kid: 'Your bar starts at 4.00 m, and the green tape and the needle are wider.',
+  },
   better: 'higher',
   resultsDelay: 0.6,
   create: (ctx) => new PoleVault(ctx),

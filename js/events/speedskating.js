@@ -7,6 +7,7 @@ import * as THREE from '../../vendor/three.bundle.js';
 import { Figurine, POSES, REST, blendPose } from '../figurine.js';
 import { crowd, banner } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
+import { fitRhythm, winFor, helped } from '../sizes.js';
 import { Particles, SkidMarks } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
 import { hudKit, Guide, Tags, RaceStart, fmtTime, beatGauge, ORD } from './common.js';
@@ -73,7 +74,7 @@ class SpeedSkating {
       const lane = lanes[i], r = R0 + LANE * (lane + 0.5);
       this.skaters.push({
         c, i, fig, lane, r, p: 0, v: 0, lean: false, wide: 0, anim: this.r(), finished: false, time: null, notes: { wide: 0, straight: 0 },
-        rhythm: new Rhythm({ target: TARGET }), effort: 0, laps: 0,
+        rhythm: fitRhythm(new Rhythm({ target: TARGET }), c), little: c.human && helped(c), effort: 0, laps: 0,
         bot: c.human ? null : { tap: new BotTapper(c.pad, rng(c.seed * 29 + 11)) },
       });
     });
@@ -232,17 +233,23 @@ class SpeedSkating {
     if (!s.go) { s.go = true; s.v = VMAX * 0.25 * this.startCtl.boost(s); }
     for (const e of evs) {
       if (!e.down) continue;
-      if (e.b === 'action') { s.lean = !s.lean; if (s.c.human) ctx.sound.pop(); continue; }
+      if (e.b === 'action' && !s.little) { s.lean = !s.lean; if (s.c.human) ctx.sound.pop(); continue; }
       const res = s.rhythm.press(e.b, e.t);
       if (res === 'stumble') { s.v *= 0.88; ctx.sound.stumble(); } else if (s.c.human) ctx.sound.step(0.3);
       s.push = 0.2; s.pushSide = e.b;
     }
     const pt = this.at(s), bend = pt.bend > 0;
+    // Little skaters lean into the bends by themselves
+    if (s.little && s.lean !== bend) { s.lean = bend; ctx.sound.pop(); }
     // a steady, long stroke is fastest; thrashing just spins the blades
-    const x = s.rhythm.cadence(now) / TARGET;
-    let eff = s.rhythm.effort(now) * (x > 1.25 ? Math.max(0.85, 1 - (x - 1.25) * 0.35) : 1);
+    const x = s.rhythm.ratio(now), th = 1 + winFor(s.c, 0.25);
+    let eff = s.rhythm.effort(now) * (x > th ? Math.max(0.85, 1 - (x - th) * 0.35) : 1);
+    // still out there a while after the winner: glide home
+    const first = this.skaters.find((o) => o.finished && o.place === 0);
+    const late = s.c.human ? (first ? now - this.startCtl.whistleAt - first.time - 6 : now - this.startCtl.whistleAt - 45) : 0;
+    if (late > 0) { eff = Math.max(eff, Math.min(0.8, 0.4 + late * 0.06)); s.glided = true; if (s.lean !== bend) s.lean = bend; }
     s.effort = eff;
-    if (bend && !s.lean) { s.wide = Math.min(1, s.wide + dt * 1.6); s.notes.wide += dt; } else s.wide = Math.max(0, s.wide - dt * 1.2);
+    if (bend && !s.lean) { s.wide = Math.min(1, s.wide + dt * 1.6 / winFor(s.c, 1)); s.notes.wide += dt; } else s.wide = Math.max(0, s.wide - dt * 1.2);
     if (!bend && s.lean) s.notes.straight += dt;
     let target = VMAX * Math.min(1.04, eff) * (1 - 0.32 * s.wide) * (!bend && s.lean ? 0.88 : 1);
     s.v += (target - s.v) * (1 - Math.exp(-(target > s.v ? ACCEL : 0.9) * dt));
@@ -274,6 +281,7 @@ class SpeedSkating {
       if (s.early) notes.push('too early off the line');
       if (s.notes.wide > 0.6) notes.push('went wide on the bends');
       if (s.notes.straight > 1) notes.push('leaned on the straights');
+      if (s.glided) notes.push('glided home');
       return s.finished ? { value: s.time, text: fmtTime(s.time), short: fmtTime(s.time), sub: notes.join(' · ') } : { value: null, dnf: true, text: 'Did not finish', short: 'DNF', sub: '' };
     });
   }
@@ -347,7 +355,7 @@ class SpeedSkating {
       const touch = humans.every((s) => s.c.type === 'touch');
       const act = touch ? '●' : 'action', lr = touch ? '◀ ▶' : 'left, right';
       const h = live || humans[0];
-      this.guide.tip(ph === 'marks' ? `hold ${act}, let go on the whistle` : `${lr}: keep the beat needle in the green · ${act} at the sweets to lean in, again after the bend`);
+      this.guide.tip(h.little ? (ph === 'marks' ? 'you push off by yourself on the whistle' : 'tap any button on a slow, steady beat: you lean into the bends by yourself') : ph === 'marks' ? `hold ${act}, let go on the whistle` : `${lr}: keep the beat needle in the green · ${act} at the sweets to lean in, again after the bend`);
       const e = clamp(h.v / VMAX, 0, 1);
       this.guide.bar('sp', e, { go: e > 0.9, hide: ph === 'marks' });
     }
@@ -357,12 +365,12 @@ class SpeedSkating {
       if (s.finished) { this.tags.set(key, `<span class="pill big" style="--tc:${s.place === 0 ? '#ffc93c' : '#fff1d6'}">${ORD[s.place]} · ${fmtTime(s.time)}</span>`); } else {
         const bendNow = this.at(s).bend > 0, soon = this.bendAhead(s, 16) > 0;
         const blink = Math.sin(tt * 12) > 0;
-        const pill = bendNow && !s.lean ? `<span class="pill big" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">lean in! (${this.ctx.competitors[s.i].type === 'touch' ? '●' : 'action'})</span><br>`
+        const pill = s.little ? (s.lean ? '<span class="pill" style="--tc:#7be495">leaning in</span><br>' : '') : bendNow && !s.lean ? `<span class="pill big" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">lean in! (${this.ctx.competitors[s.i].type === 'touch' ? '●' : 'action'})</span><br>`
           : !bendNow && s.lean && !soon ? `<span class="pill big" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">stand up! (${this.ctx.competitors[s.i].type === 'touch' ? '●' : 'action'})</span><br>`
             : soon && !s.lean ? '<span class="pill" style="--tc:#fff1d6">bend ahead</span><br>'
               : s.lean ? '<span class="pill" style="--tc:#7be495">leaning in</span><br>' : '';
         const lap = s.p >= LAP ? 'last lap' : 'lap 1';
-        this.tags.set(key, `${pill}${s.c.short} <span style="font-size:.7em">${lap}</span><br>${beatGauge(s.rhythm.cadence(this.ctx.time()) / TARGET, { lo: 0.9, hi: 1.2 })}`);
+        this.tags.set(key, `${pill}${s.c.short} <span style="font-size:.7em">${lap}</span><br>${beatGauge(s.rhythm.ratio(this.ctx.time()), { lo: 0.9, hi: 1.2 })}`);
       }
       const pt = this.at(s);
       this.tags.place(key, pt.x, Y + 11, pt.z);
@@ -409,6 +417,10 @@ export default {
     { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn: long, steady strokes beat fast ones.' },
     { verb: 'Timing', text: 'Tap <b>action</b> at the sweets to lean into a bend, and <b>action</b> again after it to stand up. Not leaning sends you wide and slow.' },
   ],
+  helpers: {
+    little: 'You push off and <b>lean into the bends by yourself</b>. Just tap <b>any button</b> on a slow, steady beat.',
+    kid: 'A slower beat, and a late lean doesn\'t send you as wide.',
+  },
   better: 'lower',
   resultsDelay: 1.6,
   create: (ctx) => new SpeedSkating(ctx),
