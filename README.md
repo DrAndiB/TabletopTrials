@@ -60,11 +60,12 @@ python -m http.server 8140
   (`js/verbs.js`: rhythm, timing, power, steer) and run on a fixed 120 Hz step, so keyboard, touch and
   computer players go through the same code path.
 - Flags are drawn from their official constructions on canvas (`js/flags.js`); sound is synthesised
-  with Web Audio (`js/audio.js`): a stadium crowd that murmurs quietly while the athletes are at it and
-  roars, groans, whistles and applauds at the big moments, and for every room its own reverb and quiet
-  background life (birds outside, a dripping tap, the kitchen clock, the fire crackling).
+  with Web Audio (`js/audio.js`): quiet three-voice chip tunes in the spirit of the old 8-bit sports
+  games (our own: a bouncy menu theme, a summer march, a winter waltz), and for every room its own reverb
+  and quiet background life (birds outside, a dripping tap, the kitchen clock, the fire crackling).
 
 ## Checks
 Headless checks use Playwright with the bundled Chromium (`_dev/tools/tt.py`), for example the full
-Trials flow and computer-jumper distances in `_dev/tools/checks/`. The ski jump physics can be tuned
+Trials flow, computer-jumper distances and a placement check (is everything standing on something, not
+floating, sunk or inside something) in `_dev/tools/checks/`. The ski jump physics can be tuned
 without a browser: `node _dev/tools/checks/skijump_sim.mjs`.

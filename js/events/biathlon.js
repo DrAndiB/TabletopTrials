@@ -307,7 +307,7 @@ class Biathlon {
     this.crowd = penguinCrowd(K.group, spots, 33);
     [[110, -112], [-150, 100], [-200, -10], [10, -HZ - 44]].forEach(([x, z], k) => {
       const b = banner(competitors[k % competitors.length].code, 15, { seed: 80 + k });
-      b.position.set(x, 0, z); b.rotation.y = (this.r() - 0.5) * 0.4;
+      b.position.set(x, Math.abs(x) < 199 && Math.abs(z) < 124 ? 1 : 0, z); b.rotation.y = (this.r() - 0.5) * 0.4;   // on the rug, or the floor
       K.group.add(b);
     });
   }

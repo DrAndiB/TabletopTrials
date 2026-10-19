@@ -3,6 +3,10 @@
 ## Open
 (nothing yet)
 
+## Done (v26)
+- Crowd sounds removed for now; quiet chip-tune music instead (menu theme, summer march, winter waltz).
+- Placement check across all events; fixed: halfpipe riders waiting in mid-air past the end of the deck, the curler crouching inside the eraser, ski jumpers, banners and snowmen sunk into or floating over the rugs, a snowman floating off the end of the sofa, bobsleds parked through their crews.
+
 ## Done (v25)
 - The toy-voice crowd was too much: a human stadium crowd instead (a quiet murmur of many people talking, roars, groans, whistles, applause), kept low so the athletes are heard.
 

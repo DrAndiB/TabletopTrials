@@ -79,7 +79,7 @@ class Halfpipe {
       stripe.position.y = 0.25; board.add(stripe);
       spin.add(board);
       K.group.add(rig);
-      this.riders.push({ c, i, fig, rig, spin, board, runs: [], best: 0, idle: this.r() * 10, home: { x: X0 - 6 - i * 7, z: -(ZL + 12), y: H + 0.6 }, bot: c.human ? null : { r: rng(c.seed * 43 + 1) } });
+      this.riders.push({ c, i, fig, rig, spin, board, runs: [], best: 0, idle: this.r() * 10, home: { x: 5 + i * 7, z: -(ZL + 12), y: H + 0.6 }, bot: c.human ? null : { r: rng(c.seed * 43 + 1) } });
     });
     this.placeWaiting();
     const kit = hudKit(this.ctx);

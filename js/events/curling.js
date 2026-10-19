@@ -237,7 +237,7 @@ class Curling {
     paper.position.set(TEE, Y, 0); paper.receiveShadow = true; g.add(paper);
     // the hack: an eraser to push off from
     const hack = new THREE.Mesh(new K.RoundedBoxGeometry(2.4, 1.6, 5, 2, 0.4), K.paint(0xf08aa3, { roughness: 0.8 }));
-    hack.position.set(1.5, 0.8, 0); hack.castShadow = true; g.add(hack);
+    hack.position.set(-1.6, 0.8, 0); hack.castShadow = true; g.add(hack);   // behind the thrower's back foot
     // the aim arrow, drawn on the table while aiming
     const ac = K.TX.makeCanvas(256, 64), a = ac.getContext('2d');
     a.fillStyle = 'rgba(255,255,255,0)'; a.fillRect(0, 0, 256, 64);
@@ -273,7 +273,7 @@ class Curling {
     for (let k = 0; k < 3; k++) spots.push({ x: 170 + k * 11, y: 0, z: 34 + (k % 2) * 3, ry: Math.PI + 0.4, size: 9 });
     // the crowd: boiled eggs in egg cups, some in knitted cosies
     this.crowd = eggCrowd(K.group, spots, 47);
-    [[100, -48], [40, -50], [225, 10]].forEach(([x, z], k) => {
+    [[100, -48], [40, -50], [216, 10]].forEach(([x, z], k) => {
       const b = banner(competitors[k % competitors.length].code, 12, { seed: 70 + k });
       b.position.set(x, 0, z); b.rotation.y = k === 2 ? -Math.PI / 2 : 0;
       K.group.add(b);

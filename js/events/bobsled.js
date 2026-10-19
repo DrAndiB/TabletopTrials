@@ -78,9 +78,10 @@ class Bobsled {
       fig.setGear('helmet');
       const sled = this.buildSled(K, c);
       K.group.add(sled); K.group.add(fig.root);
-      const home = { x: ff.c.x + ff.r.x * (18 + i * 7), z: ff.c.z + ff.r.z * (18 + i * 7) - ff.t.z * 4 };
+      const home = { x: ff.c.x + ff.r.x * (18 + i * 9), z: ff.c.z + ff.r.z * (18 + i * 9) - ff.t.z * 4 };
       this.crews.push({ c, i, fig, sled, times: [], splits: [], total: 0, home, idle: this.r() * 10, bot: c.human ? null : { tap: new BotTapper(c.pad, rng(c.seed * 37 + 3)) } });
     });
+    this.parkDir = { x: ff.t.x, z: ff.t.z };
     this.placeWaiting();
     const kit = hudKit(this.ctx);
     this.card = new Card(kit);
@@ -568,9 +569,9 @@ class Bobsled {
       c.fig.root.rotation.set(0, -0.6, 0);
       if (c.fig.root.parent !== this.ctx.kit.group) this.ctx.kit.group.add(c.fig.root);
       c.fig.ground = true;
-      // the sled parked beside its crew
-      const m = this.tmp.m.makeRotationY(0.3 + k * 0.1);
-      m.setPosition(c.home.x + 4, 0, c.home.z + 5);
+      // the sled parked in front of its crew, all in a neat row pointing down the run-out
+      const d = this.parkDir, m = this.tmp.m.makeRotationY(Math.atan2(-d.z, d.x));
+      m.setPosition(c.home.x + d.x * 7, 0, c.home.z + d.z * 7);
       c.sled.matrix.copy(m);
       c.sled.matrixWorldNeedsUpdate = true;
     });

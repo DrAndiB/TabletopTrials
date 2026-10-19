@@ -9,6 +9,7 @@ import { flagURL } from './flags.js';
 import { FlyIn, Ceremony } from './director.js';
 
 const STEP = 1 / 120;
+const EVENT_MUSIC = 0.45;   // the music during an event, relative to the menus: in the background
 
 export class Game {
   constructor(R, input, sound, hud) {
@@ -82,6 +83,8 @@ export class Game {
 
   // the fly-in through the room first (skippable), then the event itself
   start({ flyIn = this.cinematics } = {}) {
+    // quiet music under the event: the summer march or the winter waltz
+    this.sound.playMusic?.(this.def.season === 'Winter' ? 'winter' : 'summer', EVENT_MUSIC);
     const keys = flyIn && this.ev.flyIn ? this.ev.flyIn() : null;
     if (keys && keys.length > 1) {
       this.state = 'flyin';
@@ -89,9 +92,6 @@ export class Game {
       this.hud.visible(false);
       this.caption(this.def.name, this.ev.room || this.def.venue);
       this.skipWatch();
-      // a little opening tune, and the crowd already chatting
-      this.sound.intro?.(this.def.id.length);
-      this.sound.setLoop('crowd', 0.15);
       return;
     }
     this.begin();
@@ -136,7 +136,7 @@ export class Game {
     const names = medallists.slice().sort((a, b) => a.place - b.place).map((m) => `${['🥇', '🥈', '🥉'][m.place]} ${m.c.name}`).join('   ');
     this.caption(`${this.def.name}: the medals`, names, true, true);
     this.skipWatch();
-    this.sound.fanfare?.(); this.sound.cheer?.(1); this.sound.clap?.(12);
+    this.sound.stopMusic?.(0.4); this.sound.fanfare?.();
     return new Promise((resolve) => { this.ceremonyEnd = () => { this.ceremonyEnd = null; this.caption(null); resolve(); }; this.ceremonyT = 0; });
   }
 

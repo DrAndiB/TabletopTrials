@@ -280,13 +280,14 @@ class Javelin {
   buildCrowd(K, competitors) {
     const spots = [];
     const s = this.sofaTop;
-    for (let k = 0; k < 7; k++) spots.push({ x: s.x - 90 + k * 30, y: s.y, z: s.z, ry: 0.1, size: 12 + this.r() * 3 });
+    // (not quite evenly: none sits right over the gap between the two seat cushions)
+    for (let k = 0; k < 7; k++) spots.push({ x: s.x - 90 + k * 30 + (k === 3 ? 7 : 0), y: s.y, z: s.z, ry: 0.1, size: 12 + this.r() * 3 });
     for (let k = 0; k < 4; k++) spots.push({ x: 190 + k * 18, y: 1.2, z: -60 - (k % 2) * 8, ry: -0.3, size: 11 });
     for (let k = 0; k < 3; k++) spots.push({ x: -70 + k * 16, y: 1.2, z: -52, ry: 0.4, size: 10 });
     this.crowd = crowd(K.group, spots, 41);
     [[-30, -46], [60, -66], [150, -64], [230, -50]].forEach(([x, z], k) => {
       const b = banner(competitors[k % competitors.length].code, 14, { seed: 60 + k });
-      b.position.set(x, 0, z); b.rotation.y = (this.r() - 0.5) * 0.3;
+      b.position.set(x, RUG_Y, z); b.rotation.y = (this.r() - 0.5) * 0.3;
       K.group.add(b);
     });
   }

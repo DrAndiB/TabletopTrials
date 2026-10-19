@@ -33,6 +33,9 @@ const BOT = {
 // top of the ironing board at a given x (the board's straight part, extended above the start)
 const boardY = (x) => P.T0.y + (P.T0.x - x) * Math.tan(-P.BOARD.ang);
 
+// the woolly rug under the hill and the outrun (330 x 130 at (120, -6), 1.2 thick): stand on it, or on the floor
+const groundY = (x, z) => (Math.abs(x - 120) < 164 && Math.abs(z + 6) < 64 ? 1.2 : 0);
+
 class SkiJump {
   constructor(ctx) {
     this.ctx = ctx;
@@ -544,14 +547,14 @@ class SkiJump {
       b.castShadow = true; b.receiveShadow = true; g.add(b);
       spots.push({ x: 2 + k * 36, y: 5, z: -66, ry: 0.2, size: 10 }, { x: 17 + k * 36, y: 5, z: -67, ry: -0.1, size: 11 });
     }
-    for (let k = 0; k < 6; k++) spots.push({ x: 248 + k * 15 + this.r() * 4, y: 1.2, z: -42 - (k % 2) * 7, ry: -0.2 + this.r() * 0.4, size: 11 + this.r() * 2 });
-    for (let k = 0; k < 3; k++) spots.push({ x: -150 - k * 30, y: 41, z: 4 + (k % 2) * 6, ry: 0.5, size: 13 });
+    for (let k = 0; k < 6; k++) { const x = 248 + k * 15 + this.r() * 4, z = -42 - (k % 2) * 7; spots.push({ x, y: groundY(x, z), z, ry: -0.2 + this.r() * 0.4, size: 11 + this.r() * 2 }); }
+    for (let k = 0; k < 3; k++) spots.push({ x: -150 - k * 15, y: 41, z: 4 + (k % 2) * 6, ry: 0.5, size: 13 });
     // the crowd: a gang of snowmen in woolly scarves
     this.crowd = snowCrowd(g, spots, 23);
     const codes = competitors.map((c) => c.code);
     [[236, -56], [292, -52], [-40, -60], [100, -86]].forEach(([x, z], k) => {
       const b = banner(codes[k % codes.length], 15, { seed: 40 + k });
-      b.position.set(x, 0, z); b.rotation.y = (this.r() - 0.5) * 0.3;
+      b.position.set(x, groundY(x, z), z); b.rotation.y = (this.r() - 0.5) * 0.3;
       g.add(b);
     });
   }
@@ -902,7 +905,7 @@ class SkiJump {
   placeWaiting(all) {
     this.jumpers.forEach((j) => {
       if (!all && this.cur === j) return;
-      j.holder.position.set(j.home.x, 0, j.home.z);
+      j.holder.position.set(j.home.x, groundY(j.home.x, j.home.z), j.home.z);
       j.holder.rotation.set(0, 0, 0);
       j.fig.ground = true;
     });

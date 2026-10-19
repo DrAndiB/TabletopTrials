@@ -91,6 +91,7 @@ export function banner(code, w = 14, { seed = 1, poleColor = 0xf2c230 } = {}) {
   pmesh.castShadow = true;
   g.add(pmesh);
   g.userData.height = poleH;
+  g.userData.stands = true;   // stands on whatever is under it (placement checks)
   return g;
 }
 
