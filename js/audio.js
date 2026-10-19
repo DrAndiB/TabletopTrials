@@ -1,12 +1,12 @@
 // Synthesised sound, no audio files: starter whistle, wooden footsteps, kazoo and toy-piano jingles,
-// ski hiss, fan wind, thumps and clacks; a crowd that chatters in its own voice (squeaky plush toys,
-// rubber ducks, robots, penguins...), and for every room a little reverb and its own quiet background
-// life (birds outside the front door, a dripping tap, the kitchen clock, the fire crackling).
+// ski hiss, fan wind, thumps and clacks; a stadium crowd that murmurs quietly while the athletes are at
+// it and roars, groans, whistles and applauds at the big moments; and for every room a little reverb and
+// its own quiet background life (birds outside the front door, a dripping tap, the fire crackling).
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 const rand = (a, b) => a + Math.random() * (b - a);
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 
-// vowel formants (Hz), raised a little: these are small voices
+// vowel formants (Hz)
 const VOWELS = { a: [850, 1350], e: [520, 2100], i: [330, 2500], o: [520, 900], u: [380, 760] };
 // each room: reverb length (s), brightness 0..1, how much of it; and what you hear in the background
 const ROOMS = {
@@ -23,12 +23,13 @@ const ROOMS = {
   fireside: { decay: 0.6, bright: 0.35, wet: 0.12, amb: ['crackle', 'clock'] },
   menu: { decay: 0.8, bright: 0.5, wet: 0.1, amb: [] },
 };
-// who watches each event, and where
+// the room each event is in
 const SCENES = {
-  sprint: ['plush', 'hall'], hurdles: ['plush', 'hall'], swimming: ['duck', 'bathroom'], diving: ['plush', 'bedroom'],
-  javelin: ['plush', 'living'], polevault: ['plush', 'playroom'], skijump: ['snow', 'december'], speedskating: ['ginger', 'kitchenNight'],
-  curling: ['egg', 'kitchen'], bobsled: ['plush', 'attic'], halfpipe: ['robot', 'garage'], biathlon: ['penguin', 'fireside'],
+  sprint: 'hall', hurdles: 'hall', swimming: 'bathroom', diving: 'bedroom', javelin: 'living', polevault: 'playroom',
+  skijump: 'december', speedskating: 'kitchenNight', curling: 'kitchen', bobsled: 'attic', halfpipe: 'garage', biathlon: 'fireside',
 };
+// the crowd: how loud its murmur is at full excitement (it stays low so the athletes can be heard)
+const BED = 0.16;
 
 export class Sound {
   constructor() {
@@ -64,10 +65,11 @@ export class Sound {
     this.verb = ctx.createConvolver();
     this.send = ctx.createGain(); this.send.gain.value = 0.12;
     this.sfx.connect(this.send).connect(this.verb).connect(this.master);
-    // the crowd and the room's background sounds, softened a little
+    // the crowd (no rumble, no hiss: a voice band only) and the room's background sounds
     this.crowdBus = ctx.createGain(); this.crowdBus.gain.value = 1;
-    const soft = ctx.createBiquadFilter(); soft.type = 'lowpass'; soft.frequency.value = 5200;
-    this.crowdBus.connect(soft).connect(this.sfx);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 170;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 4200;
+    this.crowdBus.connect(hp).connect(lp).connect(this.sfx);
     this.ambBus = ctx.createGain(); this.ambBus.gain.value = 1; this.ambBus.connect(this.sfx);
     const len = ctx.sampleRate * 2;
     const buf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -75,6 +77,7 @@ export class Sound {
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     this.noise = buf;
     this.buildLoops();
+    this.buildCrowd();
     this.setScene(this.sceneId ?? null, true);
     this.startTicker();
     return true;
@@ -175,9 +178,9 @@ export class Sound {
     if (id === this.sceneId && !force) return;
     if (id !== this.sceneId) this.crowdLevel = 0;   // a new event: the crowd starts quiet
     this.sceneId = id;
-    const [kind, roomId] = SCENES[id] || [null, id === 'menu' ? 'menu' : null];
-    this.crowdKind = kind || 'plush';
+    const roomId = SCENES[id] || (id === 'menu' ? 'menu' : null);
     this.room = ROOMS[roomId] || null;
+    this.react = null;
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     // the reverb for this room
@@ -193,7 +196,6 @@ export class Sound {
       else if (a === 'buzz') this.hum([120, 240, 360], 0.004, 900);
       else this.amb[a] = t + rand(0.5, 3);
     }
-    this.voiceNext = t;
   }
 
   // a room's reverb: a decaying burst of (more or less) filtered noise, a short gap first
@@ -238,14 +240,7 @@ export class Sound {
   }
 
   schedule(t0, t1) {
-    // the crowd: more voices the more excited it is
-    const lvl = this.crowdLevel || 0, rate = 13 * Math.pow(lvl, 1.3);
-    if (rate < 0.05) this.voiceNext = t1;
-    else {
-      let t = Math.max(this.voiceNext || t0, t0);
-      while (t < t1) { this.voice(t, 0.75 + lvl * 0.5); t += -Math.log(1 - Math.random()) / rate; }
-      this.voiceNext = t;
-    }
+    this.crowdTick(t0, t1);
     // the room
     for (const k in this.amb) {
       let t = this.amb[k];
@@ -298,51 +293,89 @@ export class Sound {
     if (pan && this.ctx.createStereoPanner) { const p = this.ctx.createStereoPanner(); p.pan.value = Math.max(-0.9, Math.min(0.9, pan)); node.connect(p).connect(dest); } else node.connect(dest);
   }
 
-  // one member of the crowd says something, in the voice of this venue's crowd. up: excitement (pitch)
-  voice(t, up = 1, kind = this.crowdKind) {
-    const pan = rand(-0.85, 0.85), vowels = 'aeiou';
-    switch (kind) {
-      case 'duck': {   // rubber ducks: squeak, often twice
-        const f = rand(850, 1250) * up, n = Math.random() < 0.5 ? 2 : 1;
-        for (let k = 0; k < n; k++) {
-          const s = t + k * 0.13;
-          this.blip(s, f, 0.11, { type: 'square', vol: 0.012, slide: 1.35, pan });
-          this.syllable(s, f * 0.5, 0.1, { vowel: 'e', vol: 0.03, slide: 1.3, pan });
-        }
-        break;
+  // ---------- the crowd ----------
+  // Eight groups of people talking at once: noise through two moving vowel formants, switched on and
+  // off syllable by syllable, spread across the stands. Heard together it is the murmur of a crowd; with
+  // the gaps closed and the vowels opened up it roars, with rounded vowels it goes "ooh".
+  buildCrowd() {
+    const ctx = this.ctx;
+    this.crowdVol = ctx.createGain(); this.crowdVol.gain.value = 0;
+    this.crowdVol.connect(this.crowdBus);
+    this.groups = [];
+    for (let i = 0; i < 8; i++) {
+      const src = ctx.createBufferSource(); src.buffer = this.noise; src.loop = true;
+      const f1 = ctx.createBiquadFilter(); f1.type = 'bandpass'; f1.Q.value = 3.2; f1.frequency.value = 500;
+      const f2 = ctx.createBiquadFilter(); f2.type = 'bandpass'; f2.Q.value = 4.5; f2.frequency.value = 1500;
+      const g2 = ctx.createGain(); g2.gain.value = 0.65;
+      const env = ctx.createGain(); env.gain.value = 0.2;
+      src.connect(f1).connect(env); src.connect(f2).connect(g2).connect(env);
+      this.place(env, -0.85 + (1.7 * i) / 7 + rand(-0.08, 0.08), this.crowdVol);
+      src.start(0, Math.random() * 1.9);
+      this.groups.push({ f1, f2, env, next: 0 });
+    }
+  }
+
+  // reactions: a roar ('cheer'), a groan ('aww'), a gasp of anticipation ('ooh'); size scales it
+  reactCrowd(kind, size = 1) {
+    if (!this.ensure()) return;
+    const t = this.ctx.currentTime;
+    const R = { cheer: { peak: 0.25, a: 0.12, hold: 0.9, d: 1.6, vowels: ['a', 'e', 'a', 'i'] }, aww: { peak: 0.16, a: 0.18, hold: 0.25, d: 1.0, vowels: ['o', 'u'], fall: true }, ooh: { peak: 0.12, a: 0.25, hold: 0.4, d: 0.8, vowels: ['o', 'u'] } }[kind];
+    this.react = { ...R, t0: t, peak: R.peak * size, hold: R.hold * Math.max(0.6, size) };
+    for (const g of this.groups) g.next = Math.min(g.next, t);   // re-voice everyone straight away
+  }
+  reactLevel(t) {
+    const r = this.react;
+    if (!r) return 0;
+    const u = t - r.t0;
+    if (u < 0) return 0;
+    if (u < r.a) return r.peak * (u / r.a);
+    if (u < r.a + r.hold) return r.peak;
+    const k = 1 - (u - r.a - r.hold) / r.d;
+    if (k <= 0) { this.react = null; return 0; }
+    return r.peak * k * k;
+  }
+
+  crowdTick(t0, t1) {
+    if (!this.groups) return;
+    const lvl = Math.min(1, this.crowdLevel || 0);
+    const react = this.reactLevel(t1), r = react > 0.02 ? this.react : null;
+    // the murmur stays low (more of it as excitement builds); a reaction lifts the whole crowd
+    this.crowdVol.gain.setTargetAtTime(BED * (0.25 + lvl) * lvl + react, t0, r ? 0.06 : 0.25);
+    for (const g of this.groups) {
+      while (g.next < t1) {
+        const t = Math.max(g.next, t0);
+        // a syllable: a vowel (open and bright when cheering, round when groaning), on, then off
+        const v = VOWELS[r ? pick(r.vowels) : pick('aeiouaeo')], k = rand(0.85, 1.2) * (r && r.fall ? Math.max(0.75, 1 - (t - r.t0) * 0.25) : 1);
+        const dur = r ? rand(0.25, 0.5) : rand(0.1, 0.26);
+        g.f1.frequency.setTargetAtTime(v[0] * k, t, 0.02);
+        g.f2.frequency.setTargetAtTime(v[1] * k, t, 0.02);
+        g.env.gain.setTargetAtTime(rand(0.55, 1), t, 0.025);
+        g.env.gain.setTargetAtTime(r ? rand(0.55, 0.8) : rand(0.08, 0.25), t + dur * 0.6, 0.05);
+        g.next = t + dur + (r ? 0 : rand(0, 0.18));
       }
-      case 'robot': {  // tin robots: a few beeps
-        const notes = [660, 880, 990, 1175, 1320], n = 1 + Math.floor(Math.random() * 3);
-        for (let k = 0; k < n; k++) this.blip(t + k * 0.075, pick(notes) * (up > 1.1 ? 1.12 : 1), 0.06, { type: 'square', vol: 0.011, pan, attack: 0.002 });
-        if (Math.random() < 0.25) this.blip(t + n * 0.075, 500, 0.18, { type: 'triangle', vol: 0.03, slide: up > 1.1 ? 2.2 : 0.5, pan });
-        break;
-      }
-      case 'ginger': { // gingerbread people: little giggles, he-he-he
-        const f = rand(700, 1000) * up, n = 2 + Math.floor(Math.random() * 3);
-        for (let k = 0; k < n; k++) this.syllable(t + k * 0.085, f * (1 - k * 0.03), 0.07, { vowel: 'e', vol: 0.04, slide: 0.9, pan, type: 'triangle' });
-        break;
-      }
-      case 'snow': {   // snowmen: low, round ho-ho
-        const f = rand(150, 210) * (0.9 + up * 0.1);
-        for (let k = 0; k < (Math.random() < 0.6 ? 2 : 1); k++) this.syllable(t + k * 0.17, f, 0.14, { vowel: 'o', vol: 0.07, slide: 0.92, pan });
-        break;
-      }
-      case 'penguin': {  // penguins: a little honk
-        const f = rand(330, 460) * up;
-        this.syllable(t, f, rand(0.12, 0.2), { vowel: pick(['a', 'o']), vol: 0.05, slide: 0.85, pan });
-        break;
-      }
-      case 'egg': {    // egg cups: a ceramic tink now and then, giggly little voices
-        if (Math.random() < 0.4) { const f = rand(2600, 3800); this.blip(t, f, 0.18, { vol: 0.012, pan }); this.blip(t, f * 2.76, 0.1, { vol: 0.004, pan }); break; }
-        const f = rand(520, 760) * up;
-        for (let k = 0; k < 1 + Math.floor(Math.random() * 2); k++) this.syllable(t + k * 0.1, f * rand(0.9, 1.15), rand(0.06, 0.11), { vowel: vowels[Math.floor(Math.random() * 5)], vol: 0.04, slide: rand(0.85, 1.25), pan, type: 'triangle' });
-        break;
-      }
-      default: {       // plush toys: squeaky gibberish, a word of one to three syllables
-        const f = rand(360, 620) * up, n = 1 + Math.floor(Math.random() * 3);
-        let s = t;
-        for (let k = 0; k < n; k++) { const d = rand(0.06, 0.13); this.syllable(s, f * rand(0.9, 1.15), d, { vowel: vowels[Math.floor(Math.random() * 5)], vol: 0.045, slide: rand(0.85, 1.25), pan }); s += d + 0.02; }
-      }
+    }
+  }
+
+  // two-finger whistles from the stands
+  whistles(n = 2) {
+    if (!this.ensure()) return;
+    const t = this.ctx.currentTime;
+    for (let i = 0; i < n; i++) {
+      const s = t + rand(0.05, 0.9), f = rand(2300, 3100), pan = rand(-0.8, 0.8);
+      const o = this.blip(s, f * 0.85, rand(0.45, 0.8), { vol: 0.016, slide: 1.25, pan, dest: this.crowdBus, attack: 0.04 });
+      const l = this.ctx.createOscillator(); l.frequency.value = rand(5, 8);
+      const lg = this.ctx.createGain(); lg.gain.value = f * 0.012;
+      l.connect(lg).connect(o.frequency); l.start(s); l.stop(s + 0.9);
+    }
+  }
+
+  // applause: many hands, thinning out
+  applause(dur = 2.5, size = 1) {
+    if (!this.ensure()) return;
+    const t = this.ctx.currentTime, n = Math.round(dur * 26 * size);
+    for (let i = 0; i < n; i++) {
+      const u = Math.pow(Math.random(), 1.6) * dur;
+      this.tick(t + u, rand(0.02, 0.045), { freq: rand(1100, 2600), q: rand(0.8, 1.6), vol: 0.03 * (1 - (u / dur) * 0.6), pan: rand(-0.85, 0.85), dest: this.crowdBus });
     }
   }
 
@@ -369,7 +402,7 @@ export class Sound {
       }
       case 'clock': {    // tick, tock
         this.tock = !this.tock;
-        this.tick(t, 0.02, { freq: this.tock ? 2400 : 2900, q: 6, vol: 0.012, pan: -0.5 });
+        this.tick(t, 0.02, { freq: this.tock ? 2400 : 2900, q: 6, vol: 0.007, pan: -0.5 });
         return 1;
       }
       case 'snore': {    // the dog asleep in its basket
@@ -436,22 +469,17 @@ export class Sound {
   whoosh(vol = 1) { this.sweep(0.7, { from: 300, to: 2400, q: 0.9, vol: 0.1 * vol, attack: 0.2 }); }
   pop() { this.tone(500, 0.12, { type: 'sine', vol: 0.16, slideTo: 1100 }); }
   // the stuffed-animal crowd: a burst of squeaks and a cheer swell
-  // the crowd cheers: everyone at once, in its own voice, higher than usual, with a few rising "yay"s
+  // the crowd cheers: a roar, a couple of whistles when it is a big one, some applause after
   cheer(big = 1) {
-    if (!this.ensure()) return;
-    const t = this.ctx.currentTime + 0.02;
-    for (let i = 0; i < 8 + 12 * big; i++) this.voice(t + Math.random() * 1.2 * big, 1.25 + Math.random() * 0.2);
-    for (let i = 0; i < 3 + 3 * big; i++) this.syllable(t + Math.random() * 0.6, rand(420, 640), rand(0.35, 0.55), { vowel: 'e', vol: 0.04, slide: 1.35, pan: rand(-0.8, 0.8) });
+    this.reactCrowd('cheer', Math.min(1.4, big));
+    if (big >= 0.8) this.whistles(big > 1 ? 3 : 1);
   }
   // and the other way round: a falling "ohhh"
-  aww() {
-    if (!this.ensure()) return;
-    const t = this.ctx.currentTime + 0.02;
-    for (let i = 0; i < 7; i++) this.syllable(t + Math.random() * 0.25, rand(420, 600), rand(0.5, 0.75), { vowel: pick(['o', 'u']), vol: 0.04, slide: 0.62, pan: rand(-0.8, 0.8) });
-  }
-  clap(n = 14) {
-    for (let i = 0; i < n; i++) this.noiseBurst(0.04, { freq: 1500 + Math.random() * 1500, q: 1.2, type: 'bandpass', vol: 0.05, when: i * 0.07 + Math.random() * 0.05, pan: Math.random() * 1.4 - 0.7 });
-  }
+  aww() { this.reactCrowd('aww', 1); }
+  // holding its breath: "ooooh"
+  ooh() { this.reactCrowd('ooh', 1); }
+  // applause, as long as n claps of the old single clapper used to take
+  clap(n = 14) { this.applause(Math.max(1, n * 0.12), Math.min(1.2, n / 12)); }
   // kazoo: buzzy sawtooth through a vowel-ish band
   kazoo(midi, dur, when = 0, vol = 0.09) {
     if (!this.ensure()) return;

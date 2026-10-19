@@ -3,6 +3,9 @@
 ## Open
 (nothing yet)
 
+## Done (v25)
+- The toy-voice crowd was too much: a human stadium crowd instead (a quiet murmur of many people talking, roars, groans, whistles, applause), kept low so the athletes are heard.
+
 ## Done (v24)
 - The wind-like crowd murmur is gone: crowds chatter in their own voices; rooms got reverb and background sounds; a little opening tune for the fly-in; fanfare at the ceremony.
 
