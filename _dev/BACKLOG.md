@@ -11,3 +11,8 @@
   bronze step and the bronze medallist stands on it (screenshot, 19 Oct). Fix idea: put the podium
   beyond the parking row (or between the row and the track) and line the sleds up neatly in front of
   it, or hide the sleds in `ceremonySpot()`.
+- **Halfpipe: the run stops mid-air / up the wall.** `endRun()` fires as soon as the rider passes
+  `XEND` while not airborne, and the rider freezes and cheers wherever they are, often high on a wall.
+  Wanted: the rider rides out of the pipe at the end. Fix idea: after `XEND`, let the energy drain so the
+  rider settles to the bottom, carry on past the end of the U onto a short flat run-out, skid to a stop
+  with a little spray, then cheer; the score message and the next rider wait for that.
