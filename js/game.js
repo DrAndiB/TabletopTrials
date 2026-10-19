@@ -35,6 +35,7 @@ export class Game {
       flag: flagURL(c.code, 72),
     }));
     this.kit = makeKit({ scene: this.R.scene, quality: this.R.quality, seed });
+    this.sound.setScene?.(def.id);
     const ctx = this.makeContext({ skill, round, seed, attract });
     this.ev = def.create(ctx);
     await this.ev.build();
@@ -88,6 +89,9 @@ export class Game {
       this.hud.visible(false);
       this.caption(this.def.name, this.ev.room || this.def.venue);
       this.skipWatch();
+      // a little opening tune, and the crowd already chatting
+      this.sound.intro?.(this.def.id.length);
+      this.sound.setLoop('crowd', 0.15);
       return;
     }
     this.begin();
@@ -132,7 +136,7 @@ export class Game {
     const names = medallists.slice().sort((a, b) => a.place - b.place).map((m) => `${['🥇', '🥈', '🥉'][m.place]} ${m.c.name}`).join('   ');
     this.caption(`${this.def.name}: the medals`, names, true, true);
     this.skipWatch();
-    this.sound.cheer?.(1); this.sound.clap?.(10);
+    this.sound.fanfare?.(); this.sound.cheer?.(1); this.sound.clap?.(12);
     return new Promise((resolve) => { this.ceremonyEnd = () => { this.ceremonyEnd = null; this.caption(null); resolve(); }; this.ceremonyT = 0; });
   }
 
