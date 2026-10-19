@@ -211,7 +211,8 @@ class Halfpipe {
   buildCrowd(K, competitors) {
     const spots = [];
     for (let k = 0; k < 6; k++) spots.push({ x: 40 + k * 38, y: H + 0.6, z: (k % 2 ? 1 : -1) * (FB / 2 + RP + 15), ry: k % 2 ? Math.PI : 0, size: 10 + this.r() * 2 });
-    for (let k = 0; k < 4; k++) spots.push({ x: LEN + 22, y: 0, z: -30 + k * 20, ry: -Math.PI / 2, size: 13 });
+    // the rest beside the run-out at the end of the pipe, turned towards where the riders stop
+    for (let k = 0; k < 4; k++) { const x = LEN + 14 + k * 12, z = -36 - k * 7; spots.push({ x, y: 0, z, ry: Math.atan2(LEN + 8 - x, -z), size: 13 }); }
     // the crowd: tin robots and action figures, lights blinking on their heads
     this.crowd = robotCrowd(K.group, spots, 37);
     [[LEN + 14, -50], [LEN + 14, 50]].forEach(([x, z], k) => {
@@ -308,6 +309,8 @@ class Halfpipe {
       if (this.t > 3.2) this.next();
       return;
     }
+    // the end: riding out of the pipe
+    if (s.out) { this.rideOut(dt); return; }
     // ride
     s.x += DRIFT * dt;
     const held = ctx.held(rd.i);
@@ -338,7 +341,38 @@ class Halfpipe {
       }
       this.slide(dt);
     }
-    if (s.x >= XEND && !s.air) this.endRun();
+    if (s.x >= XEND && !s.air) this.startOut();
+  }
+
+  // past the end marker: no more tricks. The rider carves down to the bottom, rolls out of the end of
+  // the U onto the floor and skids to a stop in a spray of icing sugar; then the score.
+  startOut() {
+    this.rs.out = { t: 0, vx: DRIFT, skid: 0, turn: 0, face: -this.rs.dir * 0.35 };
+  }
+
+  rideOut(dt) {
+    const s = this.rs, o = s.out;
+    o.t += dt;
+    if (s.crashT > 0) s.crashT -= dt;         // a wipe-out on the last air: sit it out, then roll home
+    const p0 = surf(s.q);
+    s.q = damp(s.q, 0, s.crashT > 0 ? 2.2 : 2.8, dt);
+    const p1 = surf(s.q);
+    s.v = Math.hypot(p1.z - p0.z, p1.y - p0.y) / Math.max(dt, 1e-6);
+    o.face = damp(o.face, 0, 3, dt);
+    if (!o.skid) {
+      // down the pipe a little faster once settled at the bottom
+      o.vx = damp(o.vx, Math.abs(s.q) < FB / 2 ? 20 : DRIFT, 1.5, dt);
+      s.x += o.vx * dt;
+      if (s.x >= LEN + 2 && s.crashT <= 0) { o.skid = 1; this.ctx.sound.whoosh(0.35); }
+      if (s.x >= LEN + 30) o.skid = 1;     // never ride into the crowd
+    } else {
+      // turn the board across and dig in
+      o.turn = damp(o.turn, 1, 7, dt);
+      o.vx = Math.max(0, o.vx - dt * 26);
+      s.x += o.vx * dt;
+      if (o.vx > 1.5) for (let k = 0; k < 2; k++) this.particles.emit(s.x + 1.5, 0.8, (Math.random() - 0.5) * 3, { vx: o.vx * 0.6, spread: 4, up: 4 + Math.random() * 3, color: 0xffffff, size: 0.75, life: 0.5, alpha: 0.8, grav: 14 });
+      if (o.vx <= 0 && o.turn > 0.9) this.endRun();
+    }
   }
 
   // moving along the U with the energy we have: turn back where it runs out, fly off the lip if it doesn't
@@ -507,8 +541,10 @@ class Halfpipe {
     }
     rd.rig.position.set(s.x, y, z);
     rd.rig.rotation.set(tilt, 0, cork, 'XYZ');
-    // face down the pipe, turned a little towards where you're riding
-    const face = s.air ? 0 : -s.dir * 0.35;
+    // face down the pipe, turned a little towards where you're riding; across it when skidding to a stop
+    const o = s.out;
+    const face = s.air ? 0 : o ? o.face + o.turn * (Math.PI / 2) : -s.dir * 0.35;
+    if (o && o.skid && this.phase !== 'ended') pose = blendPose(pose, { ...pose, lean: -0.25, y: -1.0, kneeL: 1.4, kneeR: 1.4 }, o.turn);
     rd.spin.rotation.set(0, face + spinA, 0);
     if (s.crashT > 0 && !s.air) {
       // sitting in a heap on the wall, the board spinning away beside
@@ -534,7 +570,7 @@ class Halfpipe {
         : ph === 'ready' ? `tap ${act} to drop in` : s.air ? `hold ${lr} to spin, let go to stop · hold ${act}: grab · let go of both before landing` : `tap ${act} as you cross the blue strip at the bottom to pump higher`);
       this.guide.bar('en', clamp((s.E - H * 0.7) / (EMAX - H * 0.7), 0, 1), { go: s.E > H + 6, mark: (H - H * 0.7) / (EMAX - H * 0.7), hide: ph === 'ready' });
     }
-    if (!rd || !s || !rd.c.human || ph !== 'ride') { this.tags.hide('hp'); return; }
+    if (!rd || !s || !rd.c.human || ph !== 'ride' || s.out) { this.tags.hide('hp'); return; }
     if (s.note) s.note.t += 1 / 60;
     const note = s.note && s.note.t < 1.0 ? `<span class="pill" style="--tc:${s.note.col}">${s.note.text}</span><br>` : '';
     let html = note, y, z;
@@ -566,6 +602,8 @@ class Halfpipe {
       // from down the pipe, looking back up at the rider
       const ry = s.air ? H + s.air.vUp * s.air.t - 0.5 * G * s.air.t * s.air.t : surf(s.q).y;
       want = { x: s.x, y: H * 0.42 + ry * 0.45, z: 0, yaw: Math.PI / 2 - 0.1, pitch: 0.22, width: ph === 'ready' ? 70 : 92 };
+      // the run-out: round to the side, so the end of the pipe and the robots are in the picture
+      if (s.out) { const k = clamp(s.out.t / 1.6, 0, 1); want.yaw = Math.PI / 2 - 0.1 - 0.7 * k; want.width = 92 - 22 * k; want.y = H * 0.3 + ry * 0.4; want.z = -6 * k; }
     } else want = { x: X0, y: H, z: -ZL - 8, yaw: Math.PI / 2 + 0.6, pitch: 0.3, width: 80 };
     for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], 3, Math.min(dt, 0.1));
     R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: Math.max(180, c.width * 1.6) });

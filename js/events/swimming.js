@@ -201,6 +201,8 @@ class Swimming {
     this.waterNormal = K.TX.toTexture(K.TX.normalFromHeight(nf, 256, 256, 1.6), { srgb: false, repeat: [5, 2] });
     this.water = new THREE.Mesh(new THREE.PlaneGeometry(L, W, 1, 1).rotateX(-Math.PI / 2), new THREE.MeshPhysicalMaterial({ color: 0x56b4dc, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.42, normalMap: this.waterNormal, normalScale: new THREE.Vector2(0.35, 0.35), clearcoat: 1, clearcoatRoughness: 0.14, depthWrite: false }));
     this.water.position.set(L / 2, WY, 0); this.water.renderOrder = 2; g.add(this.water);
+    // the ducks on the rim and the swimmers reflected on the surface
+    this.ctx.R.addMirror(this.water, { y: WY, strength: 0.5, blur: 2.5, alpha: 0.7 });
     const tint = new THREE.Mesh(new THREE.PlaneGeometry(L, W).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x2f94c4, transparent: true, opacity: 0.3, depthWrite: false }));
     tint.position.set(L / 2, (WY + FLOOR) / 2, 0); g.add(tint);
     // sunlight rippling over the bottom of the tub

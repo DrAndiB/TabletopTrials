@@ -197,6 +197,8 @@ class SpeedSkating {
     c.strokeStyle = '#e23b2e'; c.lineWidth = 6; c.beginPath(); c.moveTo(px(sp.x), pz(R0)); c.lineTo(px(sp.x), pz(R0 + 4 * LANE)); c.stroke();
     const ice = new THREE.Mesh(new THREE.PlaneGeometry(Lx, W).rotateX(-Math.PI / 2), new THREE.MeshPhysicalMaterial({ map: K.TX.toTexture(ic, { wrap: false }), roughness: 0.28, clearcoat: 0.7, clearcoatRoughness: 0.3, envMapIntensity: 0.35 }));
     ice.position.set(0, Y, 0); ice.receiveShadow = true; g.add(ice);
+    // the skaters, the sweets and the fairy lights reflected in the ice
+    this.ctx.R.addMirror(ice, { y: Y, strength: 0.42, blur: 2 });
     // sweets round the inside of the bends: lean in here
     const sweets = [], cols = [0xe23b2e, 0xf2c230, 0x2fae5a, 0x2f6fe0, 0xf08aa3, 0x8a55c9];
     for (const bend of [1, 2]) for (let k = 0; k <= 10; k++) {

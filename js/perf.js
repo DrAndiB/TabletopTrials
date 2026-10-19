@@ -58,10 +58,12 @@ export class Perf {
   static rememberedTier() {
     try {
       const a = JSON.parse(localStorage.getItem(AUTO_KEY) || 'null');
-      if (a && (a.tier === 'low' || a.tier === 'medium') && Date.now() - a.t < AUTO_TTL) return a.tier;
+      if (a && ['low', 'medium', 'high'].includes(a.tier) && Date.now() - a.t < AUTO_TTL) return a.tier;
     } catch (e) { /* ignore */ }
-    return 'medium';
+    return null;
   }
+  // where Auto starts: what this device settled on before, else High on a graphics card, else Medium
+  static autoTier(R) { return Perf.rememberedTier() || (R.gpuLooksStrong() ? 'high' : 'medium'); }
   static rememberTier(tier) {
     try { localStorage.setItem(AUTO_KEY, JSON.stringify({ tier, t: Date.now() })); } catch (e) { /* ignore */ }
   }
@@ -115,8 +117,9 @@ export class Perf {
         this.minT += 1.5; this.cool = 1.5;
         // already at the lowest render scale and still slow: one quality step down
         if (this.minT >= 4.5 && this.R.qualityName !== 'low') {
-          Perf.rememberTier('low');
-          this.onTierChange('low');
+          const next = this.R.qualityName === 'high' ? 'medium' : 'low';
+          Perf.rememberTier(next);
+          this.onTierChange(next);
           this.R.setRenderScale(0.85);
           this.onScaleChange();
           this.minT = 0; this.cool = 2; this.win = []; this.winT = 0;

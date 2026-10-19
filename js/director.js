@@ -59,6 +59,7 @@ export class Ceremony {
     kit.group.add(this.group);
     // everyone else steps off stage: the event's own figures are hidden for the ceremony
     kit.group.traverse((o) => { if (o.userData.fig) o.visible = false; });
+    this.clearView(kit, R, spot);
     const pod = podium(kit, spot.style || 'blocks');
     this.group.add(pod.group);
     this.pod = pod;
@@ -83,6 +84,37 @@ export class Ceremony {
     this.particles.setScale(R.renderer.domElement.height * 0.9);
     this.pos = new THREE.Vector3(); this.tgt = new THREE.Vector3();
   }
+  // crowd members standing on the podium's spot or between it and the camera's arc are cleared away
+  // (the crowd behind and beside it stays as the backdrop)
+  clearView(kit, R, s) {
+    const sc = s.scale || 1, yaw0 = (s.ry || 0) + (s.yaw ?? 0.3);
+    const dCam = R.distanceForWidth(s.width ?? 40) * Math.cos(s.pitch ?? 0.2);
+    const v = new THREE.Vector3();
+    // seen from the camera anywhere on its arc, does the member cover part of the podium and medallists?
+    const cams = [-0.45, 0, 0.45].map((d) => [s.x + dCam * Math.sin(yaw0 + d), s.z + dCam * Math.cos(yaw0 + d)]);
+    const inWay = (x, z, size) => {
+      const r = size * 0.5;
+      if (Math.hypot(x - s.x, z - s.z) < 12 * sc + r) return true;
+      return cams.some(([cx, cz]) => {
+        const px = s.x - cx, pz = s.z - cz, mx = x - cx, mz = z - cz;
+        const dp = Math.hypot(px, pz), dm = Math.hypot(mx, mz);
+        if (dm > dp - 4 * sc) return false;      // behind or beside the podium: part of the backdrop
+        const th = Math.acos(Math.min(1, (px * mx + pz * mz) / (dp * dm)));
+        return th < Math.atan((13 * sc) / dp) + Math.atan(r / dm);
+      });
+    };
+    kit.group.updateMatrixWorld(true);
+    kit.group.traverse((o) => {
+      const cr = o.userData.crowd;
+      if (cr && !cr.cleared) {
+        cr.cleared = true;
+        for (const sp of cr.spots) { v.set(sp.x, sp.y || 0, sp.z); o.parent.localToWorld(v); if (inWay(v.x, v.z, sp.size || 10)) sp.hidden = true; }
+      }
+      const m = o.userData.crowdMember;
+      if (m) { o.getWorldPosition(v); if (inWay(v.x, v.z, m.size)) o.visible = false; }
+    });
+  }
+
   update(dt) {
     this.t += dt;
     const t = this.t, s = this.spot;

@@ -331,7 +331,10 @@ class HopCrowd {
   }
   update(t, level = 0) {
     const { m4, q, e, p, s } = this;
+    if (!this.tagged) { this.tagged = true; for (const m of this.meshes) m.userData.crowd = this; }
     this.spots.forEach((sp, i) => {
+      // cleared away for the medal ceremony
+      if (sp.hidden) { m4.makeScale(0, 0, 0); for (const m of this.meshes) m.setMatrixAt(i, m4); return; }
       // floating ones just bob on the water; the rest hop as the excitement rises
       const hop = sp.float ? 0.25 * Math.sin(t * 2.1 + this.ph[i]) : Math.max(0, Math.sin(t * this.sp[i] + this.ph[i])) * level * level * sp.size * 0.35;
       const sway = Math.sin(t * 1.3 + this.ph[i]) * (0.05 + level * 0.12);

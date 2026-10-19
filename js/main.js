@@ -49,7 +49,8 @@ function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringif
 // ---------- engine ----------
 const canvas = $('#game');
 let quality = params.get('quality') || settings.quality;
-const R = new GameRenderer(canvas, quality === 'auto' ? Perf.rememberedTier() : quality);
+const R = new GameRenderer(canvas, quality === 'auto' ? 'medium' : quality);
+if (quality === 'auto') R.setQuality(Perf.autoTier(R));
 const input = new Input();
 const sound = new Sound();
 const hud = new Hud($('#hud'));
@@ -192,7 +193,7 @@ function applyQuality(q) {
   quality = q;
   if (q === 'auto') Perf.forgetTier();
   R.setRenderScale(1);
-  R.setQuality(q === 'auto' ? 'medium' : q);
+  R.setQuality(q === 'auto' ? Perf.autoTier(R) : q);
   perf.setAuto(q === 'auto');
 }
 

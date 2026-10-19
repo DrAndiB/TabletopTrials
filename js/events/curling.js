@@ -182,6 +182,8 @@ class Curling {
     const T = K.TX.woodTextures({ size: 1024, planks: 3, base: 0xb07a4f, dark: 0x6e4a2f, light: 0xd7a878, seed: 77, ringFreq: 10, roughBase: 0.32, lacquer: 0.85, grainContrast: 0.9 });
     const top = new THREE.Mesh(new K.RoundedBoxGeometry(270, 4, 112, 3, 1.5), new THREE.MeshPhysicalMaterial({ ...T, roughness: 0.3, clearcoat: 0.6, clearcoatRoughness: 0.2, envMapIntensity: 0.4 }));
     top.position.set(90, -2, 0); top.receiveShadow = true; top.castShadow = true; g.add(top);
+    // polished till it shines: the caps, the egg cups and the breakfast things reflected in it
+    this.ctx.R.addMirror(top, { y: 0, strength: 0.3, blur: 2.5 });
     for (const x of [-38, 218]) for (const z of [-48, 48]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(6, 72, 6), K.std({ color: 0x8a5a36, roughness: 0.4 })); leg.position.set(x, -40, z); g.add(leg); }
     // things on the table: a fruit bowl, mugs, salt and pepper
     const bowl = new THREE.Mesh(K.lathe([[0.01, 0], [8, 0.4], [14, 6], [15, 9], [14.4, 9.2], [13, 6.4], [7.5, 1.2], [0.01, 1]], 32), K.std({ color: 0xf4efe6, roughness: 0.3 }));

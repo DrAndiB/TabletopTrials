@@ -266,6 +266,7 @@ export function crowd(parent, spots, seed = 1) {
     const a = stuffedAnimal(kind, seed * 17 + i, sp.size || 9 + r() * 3);
     a.group.position.set(sp.x, sp.y || 0, sp.z);
     a.group.rotation.y = sp.ry || 0;
+    a.group.userData.crowdMember = { size: sp.size || 10 };   // the medal ceremony may clear it away
     parent.add(a.group);
     return a;
   });

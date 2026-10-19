@@ -7,6 +7,8 @@ import { setMaxAnisotropy } from './textures.js';
 // glow: [strength, radius, threshold]; the threshold is in linear light before tone mapping, so only
 // things brighter than a sunlit white wall (bulbs, flames, the sky through a window) glow
 export const BLOOM = [0.5, 0.45, 2.4];
+// the tinted room environments come out a little dimmer than the plain studio one
+const ENV_GAIN = 1.1;
 
 const TiltShiftShader = {
   uniforms: {
@@ -89,11 +91,11 @@ const TiltShiftDiskShader = {
 
 // tilt: true/false keeps its meaning for world builders (false = Low); tiltMode picks the shader.
 // bloom: glow around lights, fire and bright windows; ao: ambient occlusion (soft shading in corners
-// and where things touch)
+// and where things touch); mirror: resolution of planar reflections (0 = none)
 export const QUALITY = {
-  high: { pr: 2, shadow: 4096, msaa: 4, tilt: true, tiltMode: 'two-pass', grass: 1, bloom: true, ao: true },
-  medium: { pr: 1.35, shadow: 2048, msaa: 4, tilt: true, tiltMode: 'one-pass', grass: 0.7, bloom: true, ao: false },
-  low: { pr: 1, shadow: 1024, msaa: 0, tilt: false, tiltMode: 'off', grass: 0.35, bloom: false, ao: false },
+  high: { pr: 2, shadow: 4096, msaa: 4, tilt: true, tiltMode: 'two-pass', grass: 1, bloom: true, ao: true, mirror: 0.5 },
+  medium: { pr: 1.35, shadow: 2048, msaa: 4, tilt: true, tiltMode: 'one-pass', grass: 0.7, bloom: true, ao: 'half', mirror: 0.4 },
+  low: { pr: 1, shadow: 1024, msaa: 0, tilt: false, tiltMode: 'off', grass: 0.35, bloom: false, ao: false, mirror: 0 },
 };
 
 // Integrated graphics as named by WEBGL_debug_renderer_info (browsers may shorten the name).
@@ -136,6 +138,7 @@ export class GameRenderer {
     this.sunDir = new THREE.Vector3(-0.45, 1, -0.35).normalize();
     this.scene.add(this.sun, this.sun.target);
     this.shadowSpan = 150;
+    this.mirrors = [];
 
     this.quality = null;
     this.setQuality(quality);
@@ -177,6 +180,11 @@ export class GameRenderer {
   }
 
   // Integrated graphics (Intel, AMD APU): used for the "switch to High performance" hint.
+  // A graphics card (or Apple silicon) that can take High: where Auto starts.
+  gpuLooksStrong() {
+    return !!this.gpu && (DEDICATED_GPU.test(this.gpu) || /apple m\d/i.test(this.gpu));
+  }
+
   gpuLooksIntegrated() {
     return !!this.gpu && INTEGRATED_GPU.test(this.gpu) && !DEDICATED_GPU.test(this.gpu);
   }
@@ -224,7 +232,9 @@ export class GameRenderer {
     this.ao = null; this.bloom = null;
     if (this.quality.ao) {
       this.ao = new GTAOPass(this.scene, this.camera, w, h);
-      this.ao.updateGtaoMaterial({ radius: 6, distanceExponent: 1.4, thickness: 4, scale: 1.1, samples: 12 });
+      // Medium works out the shading at half resolution (it is soft anyway)
+      if (this.quality.ao === 'half') { const set = this.ao.setSize.bind(this.ao); this.ao.setSize = (sw, sh) => set(Math.max(1, sw >> 1), Math.max(1, sh >> 1)); this.ao.setSize(w, h); }
+      this.ao.updateGtaoMaterial({ radius: 8, distanceExponent: 1.5, thickness: 5, scale: 1.25, samples: this.quality.ao === 'half' ? 8 : 12 });
       this.ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
       this.ao.blendIntensity = this.aoCfg ?? 0.85;
       this.composer.addPass(this.ao);
@@ -263,7 +273,8 @@ export class GameRenderer {
     if (cfg.hemiSky != null) this.hemi.color.set(cfg.hemiSky);
     if (cfg.hemiGround != null) this.hemi.groundColor.set(cfg.hemiGround);
     if (cfg.hemiIntensity != null) this.hemi.intensity = cfg.hemiIntensity;
-    this.scene.environmentIntensity = cfg.envIntensity ?? 0.55;
+    this.scene.environmentIntensity = (cfg.envIntensity ?? 0.55) * ENV_GAIN;
+    this.buildEnv(cfg);
     this.renderer.toneMappingExposure = cfg.exposure ?? 1.0;
     this.scene.background = new THREE.Color(cfg.background ?? 0x2a2420);
     this.scene.fog = cfg.fog ? new THREE.Fog(cfg.fog.color, cfg.fog.near, cfg.fog.far) : null;
@@ -275,6 +286,28 @@ export class GameRenderer {
     this.setGrade(cfg.grade);
     this.aoCfg = cfg.ao ?? 0.85;
     if (this.ao) this.ao.blendIntensity = this.aoCfg;
+  }
+
+  // Reflections and soft ambient light that match the room: the studio room environment, its walls
+  // tinted with the venue's colours and its light panels with the colour of the sun (or lamp) light.
+  buildEnv(cfg) {
+    const norm = (c) => c.multiplyScalar(1 / Math.max(1e-3, c.r, c.g, c.b));
+    const sky = new THREE.Color(cfg.hemiSky ?? 0xfff6e8), ground = new THREE.Color(cfg.hemiGround ?? 0x6b5a48);
+    const wall = norm(sky.clone().lerp(ground, 0.35)).lerp(new THREE.Color(1, 1, 1), 0.35);
+    const light = norm(new THREE.Color(cfg.sunColor ?? 0xfff1dc)).lerp(new THREE.Color(1, 1, 1), 0.25);
+    const env = new RoomEnvironment();
+    env.traverse((o) => {
+      if (!o.isMesh) return;
+      if (o.material.isMeshBasicMaterial) o.material.color.multiply(light);
+      else if (o.material.color) o.material.color.multiply(wall);
+    });
+    const pm = new THREE.PMREMGenerator(this.renderer);
+    const tex = pm.fromScene(env, 0.04).texture;
+    pm.dispose();
+    env.dispose();
+    if (this.envTex) this.envTex.dispose();
+    this.envTex = tex;
+    this.scene.environment = tex;
   }
 
   resize() {
@@ -355,10 +388,25 @@ export class GameRenderer {
     return out;
   }
 
+  // A glossy horizontal surface (ice, a polished table, water) that reflects the scene above it.
+  // Returns the Mirror; it goes away with its mesh.
+  addMirror(mesh, opts) {
+    const m = new Mirror(this, mesh, opts);
+    this.mirrors.push(m);
+    return m;
+  }
+
+  updateMirrors() {
+    if (!this.mirrors.length) return;
+    this.mirrors = this.mirrors.filter((m) => { if (inScene(m.mesh, this.scene)) return true; m.dispose(); return false; });
+    for (const m of this.mirrors) m.update();
+  }
+
   // `shake` (table units, set by the game after big crashes) nudges the camera for this frame only,
   // so gameplay checks that use the camera (who is on screen) never see it.
   render() {
     this.renderer.info.reset();
+    this.updateMirrors();
     const s = this.shake || 0;
     if (s > 0.01) {
       const cam = this.camera, t = performance.now() / 1000;
@@ -371,6 +419,99 @@ export class GameRenderer {
     }
     this.composer.render();
   }
+}
+
+function inScene(o, scene) {
+  for (let p = o; p; p = p.parent) if (p === scene) return true;
+  return false;
+}
+
+// Planar reflection: the scene rendered from the camera mirrored in the surface's plane (clipped at the
+// plane, so nothing underneath shows), at reduced resolution, mixed into the surface's own material
+// with a little blur and more of it at grazing angles.
+const _q = new THREE.Vector4(), _plane = new THREE.Plane(), _clip = new THREE.Vector4(), _rot = new THREE.Matrix4();
+const _v = new THREE.Vector3(), _t = new THREE.Vector3(), _n = new THREE.Vector3(0, 1, 0), _sphere = new THREE.Sphere(), _fr = new THREE.Frustum(), _pv = new THREE.Matrix4();
+class Mirror {
+  // y: the surface height; strength: how much it reflects at most; blur: in texels; alpha: how far the
+  // reflection makes a see-through surface (water) opaque
+  constructor(R, mesh, { y = 0, strength = 0.45, blur = 1.5, alpha = 0 } = {}) {
+    this.R = R; this.mesh = mesh; this.y = y;
+    this.rt = new THREE.WebGLRenderTarget(2, 2, { type: THREE.HalfFloatType });
+    this.cam = new THREE.PerspectiveCamera();
+    this.uniforms = {
+      tMirror: { value: this.rt.texture }, mirrorMatrix: { value: new THREE.Matrix4() },
+      mirrorStrength: { value: 0 }, mirrorTexel: { value: new THREE.Vector2(0.002, 0.002) }, mirrorBlur: { value: blur }, mirrorAlpha: { value: alpha },
+    };
+    this.strength = strength;
+    const mat = mesh.material, u = this.uniforms;
+    mat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, u);
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform mat4 mirrorMatrix; varying vec4 vMirror; varying float vMirUp;')
+        .replace('#include <project_vertex>', '#include <project_vertex>\nvMirror = mirrorMatrix * (modelMatrix * vec4(transformed, 1.0));\nvMirUp = normalize((modelMatrix * vec4(objectNormal, 0.0)).xyz).y;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform sampler2D tMirror; uniform float mirrorStrength, mirrorBlur, mirrorAlpha; uniform vec2 mirrorTexel; varying vec4 vMirror; varying float vMirUp;')
+        .replace('#include <opaque_fragment>', `{
+          vec2 muv = vMirror.xy / vMirror.w, px = mirrorTexel * mirrorBlur;
+          vec3 refl = texture2D(tMirror, muv).rgb * 0.36
+            + (texture2D(tMirror, muv + vec2(px.x, 0.0)).rgb + texture2D(tMirror, muv - vec2(px.x, 0.0)).rgb
+            + texture2D(tMirror, muv + vec2(0.0, px.y)).rgb + texture2D(tMirror, muv - vec2(0.0, px.y)).rgb) * 0.16;
+          float NdotV = clamp(dot(normalize(vNormal), normalize(vViewPosition)), 0.0, 1.0);
+          float k = mirrorStrength * smoothstep(0.85, 0.98, vMirUp) * (0.3 + 0.7 * pow(1.0 - NdotV, 3.0));
+          outgoingLight = mix(outgoingLight, refl, k);
+          diffuseColor.a = mix(diffuseColor.a, 1.0, k * mirrorAlpha);
+        }
+        #include <opaque_fragment>`);
+    };
+    mat.customProgramCacheKey = () => 'mirror';
+    mat.needsUpdate = true;
+  }
+
+  update() {
+    const R = this.R, cam = R.camera, r = R.renderer, mesh = this.mesh, u = this.uniforms;
+    const scale = R.quality.mirror || 0;
+    cam.updateMatrixWorld();
+    // only when it is on screen and seen from above
+    if (!mesh.geometry.boundingSphere) mesh.geometry.computeBoundingSphere();
+    _sphere.copy(mesh.geometry.boundingSphere).applyMatrix4(mesh.matrixWorld);
+    _fr.setFromProjectionMatrix(_pv.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+    if (!scale || !mesh.visible || cam.position.y <= this.y + 0.05 || !_fr.intersectsSphere(_sphere)) { u.mirrorStrength.value = 0; return; }
+    u.mirrorStrength.value = this.strength;
+    const size = r.getDrawingBufferSize(_t), w = Math.max(2, Math.round(size.x * scale)), h = Math.max(2, Math.round(size.y * scale));
+    if (this.rt.width !== w || this.rt.height !== h) { this.rt.setSize(w, h); u.mirrorTexel.value.set(1 / w, 1 / h); }
+    // the mirrored camera
+    const vc = this.cam, y = this.y;
+    vc.position.set(cam.position.x, 2 * y - cam.position.y, cam.position.z);
+    _rot.extractRotation(cam.matrixWorld);
+    _v.set(0, 0, -1).applyMatrix4(_rot).add(cam.position);
+    _v.y = 2 * y - _v.y;
+    vc.up.set(0, 1, 0).applyMatrix4(_rot); vc.up.y = -vc.up.y;
+    vc.lookAt(_v);
+    vc.near = cam.near; vc.far = cam.far;
+    vc.updateMatrixWorld();
+    vc.matrixWorldInverse.copy(vc.matrixWorld).invert();
+    vc.projectionMatrix.copy(cam.projectionMatrix);
+    u.mirrorMatrix.value.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1).multiply(vc.projectionMatrix).multiply(vc.matrixWorldInverse);
+    // clip everything under the surface (oblique near plane)
+    _plane.setFromNormalAndCoplanarPoint(_n, _t.set(0, y, 0)).applyMatrix4(vc.matrixWorldInverse);
+    _clip.set(_plane.normal.x, _plane.normal.y, _plane.normal.z, _plane.constant);
+    const pm = vc.projectionMatrix.elements;
+    _q.set((Math.sign(_clip.x) + pm[8]) / pm[0], (Math.sign(_clip.y) + pm[9]) / pm[5], -1, (1 + pm[10]) / pm[14]);
+    _clip.multiplyScalar(2 / _clip.dot(_q));
+    pm[2] = _clip.x; pm[6] = _clip.y; pm[10] = _clip.z + 1 - 0.003; pm[14] = _clip.w;
+    // render it (the shadow maps are reused from the main view)
+    const prevRT = r.getRenderTarget(), prevShadow = r.shadowMap.autoUpdate;
+    mesh.visible = false;
+    r.shadowMap.autoUpdate = false;
+    r.setRenderTarget(this.rt);
+    r.clear();
+    r.render(R.scene, vc);
+    r.setRenderTarget(prevRT);
+    r.shadowMap.autoUpdate = prevShadow;
+    mesh.visible = true;
+  }
+
+  dispose() { this.rt.dispose(); }
 }
 
 function readGpuName(gl) {

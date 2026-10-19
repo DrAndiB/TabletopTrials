@@ -1094,8 +1094,8 @@ class SkiJump {
       { x: p.x + 14, y: p.y - 2, z: 0, yaw: 0.25, pitch: 0.2, width: 90 },
     ];
   }
-  // in front of the Christmas tree, on a stack of presents
-  ceremonySpot() { return { x: 262, y: 0, z: -46, style: 'gifts', gear: 'ski', yaw: 0.15, pitch: 0.13, width: 56 }; }
+  // on a stack of presents in front of the snowmen and the Christmas tree
+  ceremonySpot() { return { x: 268, y: 0, z: -20, style: 'gifts', gear: 'ski', yaw: 0.12, pitch: 0.14, width: 64 }; }
 
   dispose() {
     for (const j of this.jumpers) j.fig.dispose();

@@ -69,7 +69,9 @@ The instance:
 - `ceremonySpot()` (optional): where the medal ceremony is held, `{ x, y, z, ry?, style, gear, yaw, pitch,
   width, bob? }` (`style` picks the podium: blocks, shoebox, float, books, cushions, gifts, biscuits, sugar,
   boxes, tins, bricks; `gear` dresses the medallists). Hide anything here that would be in the way; the
-  event's own figurines are hidden automatically.
+  event's own figurines, and crowd members between the camera and the podium, are hidden automatically.
+- Glossy horizontal surfaces can reflect the scene: `ctx.R.addMirror(mesh, { y, strength, blur, alpha })`
+  in `build()` (Medium and High only; the mirror goes away with the mesh).
 - When it is over: `ctx.finish(results)` with `results[i] = { value, text, short?, sub?, dnf? }` for each
   competitor (value ranks; text shows in results; sub is a small second line).
 

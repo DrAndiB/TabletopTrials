@@ -35,7 +35,7 @@ animals cheer from cardboard-box stands. Sibling of [Tabletop Turbo](https://git
 | Ski jump | Winter | Down an ironing board onto a cushion mountain: tap to start, keep your balance, tap in the green zone, lean against announced fan gusts, tap at LAND! for a telemark. Two jumps. |
 | Speed skating | Winter | Two laps of an ice oval in a baking tray: long steady strokes, tap action at the sweets to lean into a bend and again after it to stand up. |
 | Curling | Winter | Bottle caps down the kitchen table: aim (straight goes straight, aimed to one side the cap curls back to the middle, a dotted line shows the path), hold for strength, sweep with a toothbrush in rhythm. |
-| Bobsled | Winter | Poster tubes from the toy chest to the floor: a flight down the course first, push off in rhythm, jump in on the green stripe, hold left/right to keep on the red line through the bends, a mini map in the corner. About 30 s a run; two runs for one or two crews. |
+| Bobsled | Winter | Poster tubes from the toy chest to the floor: a flight down the course first, push off in rhythm, jump in on the green stripe, hold left/right to keep on the red line through the bends, a mini map in the corner. Two runs of about 30 s, the times add up; the second run goes in reverse order (the leader last), and yellow timing lines give split times against the leader. |
 | Halfpipe | Winter | A cardboard U dusted with icing sugar: drop in with speed, pump at the bottom, hold left/right to spin and action to grab in the air, let go of both before landing. Two runs, the best counts. |
 | Biathlon | Winter | Three laps round the coffee table, over a sofa cushion and through felt fir trees: easy beat on the flat, harder uphill, tuck downhill but stand up before the curve; after laps 1 and 2 the stadium fork leads to the range (steer the drifting sight onto five caps), after lap 3 to the finish. |
 
@@ -51,8 +51,10 @@ python -m http.server 8140
 
 ## Under the hood
 - three.js r186 as a single local ES module bundle (`vendor/`), plain ES modules, no framework.
-- Post-processing: tilt-shift blur for the miniature look, a colour grade, bloom on lights and fire
-  (Medium and High) and ambient occlusion (High). Auto quality lowers the resolution if frames drop.
+- Lighting and post-processing: reflections tinted to each room, mirror reflections on the ice, the
+  polished kitchen table and the bath water, tilt-shift blur for the miniature look, a colour grade,
+  bloom on lights and fire and ambient occlusion (half resolution on Medium). Auto starts on High with a
+  graphics card, Medium otherwise, and lowers the resolution, then the quality, if frames drop.
 - Figurines are one skinned mesh each, posed from flat numeric poses (`js/figurine.js`).
 - Events plug in through a small contract (`_dev/EVENT_GUIDE.md`), share input "verbs"
   (`js/verbs.js`: rhythm, timing, power, steer) and run on a fixed 120 Hz step, so keyboard, touch and

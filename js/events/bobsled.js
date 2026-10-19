@@ -1,7 +1,8 @@
 // Bobsled: down a run of poster tubes cut in half, from the top of the toy chest to the floor.
 // Tap LEFT/RIGHT in turn to push the sled off, tap ACTION to jump in before the push zone ends, then
 // hold LEFT/RIGHT to keep the sled on the red line through the bends (left alone it swings up too
-// high). Two runs each with one or two crews (the times add up), one run with three or four.
+// high). Two runs, the times add up; the second run goes in reverse order of the standings (the
+// leader last). Yellow timing lines on the way down give split times against the leader.
 import * as THREE from '../../vendor/three.bundle.js';
 import { Figurine, POSES, REST } from '../figurine.js';
 import { crowd, banner, floorMaterial } from '../props.js';
@@ -13,7 +14,9 @@ import { fitRhythm, winFor, helped } from '../sizes.js';
 import { buildTrack, stepSled, autoSteer, phiStar, RT, PUSH } from './bobsled-track.js';
 import { sunPatch, sunbeams, FairyLights } from '../venues.js';
 
-const RUNS_FEW = 2, RUNS_MANY = 1;    // two runs each for one or two crews, one for three or four
+const RUNS = 2;
+const SPLITS = [0.3, 0.55, 0.8];      // timing lines, as a share of the way from the end of the push to the finish
+const ORD = ['1st', '2nd', '3rd', '4th'];
 const BEAM = 6;                        // the clock starts here
 const JUMP_ZONE = 6;                   // the green stripe at the end of the push: jump in here
 const INTRO_T = 7;                     // the camera flies down the course before the first run
@@ -76,7 +79,7 @@ class Bobsled {
       const sled = this.buildSled(K, c);
       K.group.add(sled); K.group.add(fig.root);
       const home = { x: ff.c.x + ff.r.x * (18 + i * 7), z: ff.c.z + ff.r.z * (18 + i * 7) - ff.t.z * 4 };
-      this.crews.push({ c, i, fig, sled, times: [], total: 0, home, idle: this.r() * 10, bot: c.human ? null : { tap: new BotTapper(c.pad, rng(c.seed * 37 + 3)) } });
+      this.crews.push({ c, i, fig, sled, times: [], splits: [], total: 0, home, idle: this.r() * 10, bot: c.human ? null : { tap: new BotTapper(c.pad, rng(c.seed * 37 + 3)) } });
     });
     this.placeWaiting();
     const kit = hudKit(this.ctx);
@@ -228,6 +231,9 @@ class Bobsled {
     this.stripe(K, BEAM - 0.4, BEAM + 0.4, 0xffffff);
     this.stripe(K, PUSH - JUMP_ZONE, PUSH, 0x2fae5a);
     this.stripe(K, PUSH, PUSH + 0.8, 0xe23b2e);
+    // the timing lines for the split times
+    this.splitS = SPLITS.map((f) => PUSH + f * (this.track.finishS - PUSH));
+    for (const s of this.splitS) this.stripe(K, s - 0.5, s + 0.5, 0xffc93c);
   }
 
   stripe(K, s0, s1, color) {
@@ -267,6 +273,7 @@ class Bobsled {
     g.strokeStyle = '#2fae5a'; g.lineWidth = 8; path(0, PUSH);
     const fin = this.track.at(this.track.finishS), [fx, fy] = this.mapXY(fin.x, fin.z);
     g.fillStyle = '#1f1a17'; g.fillRect(fx - 7, fy - 7, 14, 14); g.fillStyle = '#fff'; g.fillRect(fx - 7, fy - 7, 7, 7); g.fillRect(fx, fy, 7, 7);
+    for (const s of this.splitS) { const p = this.track.at(s), [x, y] = this.mapXY(p.x, p.z); g.fillStyle = '#1f1a17'; g.beginPath(); g.arc(x, y, 6.5, 0, 7); g.fill(); g.fillStyle = '#ffc93c'; g.beginPath(); g.arc(x, y, 4, 0, 7); g.fill(); }
     this.mapBg = bg;
   }
 
@@ -341,7 +348,8 @@ class Bobsled {
   start() {
     this.ctx.sound.setLoop('crowd', 0.25);
     this.turn = -1; this.run = 1;
-    this.runs = this.crews.length <= 2 ? RUNS_FEW : RUNS_MANY;
+    this.runs = RUNS;
+    this.order = this.crews.map((c) => c.i);
     // a flight down the whole course first (any player's action skips it)
     this.phase = 'intro'; this.t = 0;
     this.ctx.hud.message('The course', 'small', '#fff', 2);
@@ -350,10 +358,15 @@ class Bobsled {
   next() {
     this.turn++;
     if (this.turn >= this.crews.length) {
-      if (this.run < this.runs) { this.run++; this.turn = 0; this.ctx.hud.message('Second run', 'small', '#ffc93c', 1.4); } else { this.finishAll(); return; }
+      if (this.run < this.runs) {
+        this.run++; this.turn = 0;
+        // the second run in reverse order of the standings: the leader goes last
+        this.order = [...this.crews].sort((a, b) => b.total - a.total).map((c) => c.i);
+        this.ctx.hud.message('Second run: the leader goes last', 'small', '#ffc93c', 1.8);
+      } else { this.finishAll(); return; }
     }
-    const cr = this.cur = this.crews[this.turn];
-    this.sl = { s: 0, v: 0, phi: 0, w: 0, wob: 0, rhythm: fitRhythm(new Rhythm({ target: TARGET }), cr.c), little: cr.c.human && helped(cr.c), kid: cr.c.human && helped(cr.c, 1), pushing: false, inside: false, jumpT: -1, startT: null, time: null, anim: 0, hist: [], note: null };
+    const cr = this.cur = this.crews[this.order[this.turn]];
+    this.sl = { s: 0, v: 0, phi: 0, w: 0, wob: 0, rhythm: fitRhythm(new Rhythm({ target: TARGET }), cr.c), little: cr.c.human && helped(cr.c), kid: cr.c.human && helped(cr.c, 1), pushing: false, inside: false, jumpT: -1, startT: null, time: null, anim: 0, hist: [], note: null, split: 0, splits: [], splitNote: null };
     if (!cr.bot) this.skipper.update(false, false);
     this.camInit = false;   // cut to the start
     this.phase = 'ready'; this.t = 0;
@@ -450,6 +463,7 @@ class Bobsled {
       if (sl.hist.length > 120) sl.hist.shift();
       if (sl.scrape && !sl.scraping) { ctx.sound.stumble(); sl.scraping = true; } else if (!sl.scrape) sl.scraping = false;
       ctx.sound.setLoop('hiss', clamp(sl.v / 60, 0.1, 0.6), 1800 + sl.v * 40);
+      if (sl.split < this.splitS.length && sl.startT != null && sl.s >= this.splitS[sl.split]) this.passSplit(now - (sl.s - this.splitS[sl.split]) / Math.max(1, sl.v));
       if (sl.s >= this.track.finishS) this.crossFinish(now - (sl.s - this.track.finishS) / Math.max(1, sl.v));
     } else if (this.phase === 'finished') {
       // the run-out: braking to a stop
@@ -479,16 +493,61 @@ class Bobsled {
     cr.times.push(time); cr.total = Math.round(cr.times.reduce((a, b) => a + b, 0) * 100) / 100;
     this.phase = 'finished'; this.t = 0;
     for (const b of ['left', 'right']) cr.c.pad.push(b, false, t);
-    const best = Math.min(...this.crews.filter((x) => x.times.length >= this.run).map((x) => x.times[this.run - 1]));
-    ctx.hud.message(fmtTime(time), '', time <= best ? '#ffc93c' : '#fff');
-    if (time <= best && this.turn > 0) ctx.hud.flash('Fastest this run!', '#7be495');
-    ctx.sound.cheer(time <= best ? 1 : 0.5); ctx.sound.clap(6);
+    cr.splits[this.run - 1] = sl.splits.slice();
+    // against the leader: the run time in run 1, the two runs added up in run 2
+    const ref = this.splitRef(0), r = this.run - 1;
+    const total = this.sumTimes(cr, r + 1);
+    const first = !ref || ref.projected;   // first down this run: nobody to beat yet
+    const lead = first || total <= ref.final;
+    const place = 1 + this.crews.filter((x) => x !== cr && x.times.length > r && this.sumTimes(x, r + 1) < total).length;
+    ctx.hud.message(r ? `${fmtTime(time)} · total ${fmtTime(total)}` : fmtTime(time), '', lead ? '#ffc93c' : '#fff');
+    if (first) ctx.hud.flash(`${cr.c.short}: ${fmtTime(total)} is the time to beat`, '#ffc93c');
+    else {
+      const d = total - ref.final;
+      ctx.hud.flash(Math.abs(d) < 0.005 ? `level with ${ref.c.c.short}!` : lead ? `${cr.c.short} take the lead! −${Math.abs(d).toFixed(2)}` : `+${d.toFixed(2)} behind ${ref.c.c.short} · ${ORD[place - 1]}`, lead ? '#7be495' : '#ff8a65');
+    }
+    ctx.sound.cheer(lead ? 1 : 0.5); ctx.sound.clap(6);
     ctx.hud.chip(cr.i, fmtTime(cr.total), 'active');
-    cr.fig.setExpression(time <= best ? 'wow' : 'happy');
+    cr.fig.setExpression(lead ? 'wow' : 'happy');
     this.updateCard();
   }
 
-  // skip a computer run: finish it with its own steering in one go
+  sumTimes(x, n) { return x.times.slice(0, n).reduce((a, b) => a + b, 0); }
+
+  // who to measure against at split k: the leader among the crews that have finished this run (the two
+  // runs added up in run 2); before anyone has, the leader after run 1, going by their run-1 splits.
+  // value: their time at split k; final: their time at the finish (both including earlier runs)
+  splitRef(k) {
+    const r = this.run - 1, cur = this.cur;
+    const done = this.crews.filter((x) => x !== cur && x.times.length > r && x.splits[r]);
+    if (done.length) {
+      const ld = done.reduce((a, b) => (this.sumTimes(a, r + 1) <= this.sumTimes(b, r + 1) ? a : b));
+      return { c: ld, value: this.sumTimes(ld, r) + ld.splits[r][k], final: this.sumTimes(ld, r + 1) };
+    }
+    if (r > 0) {
+      const prev = this.crews.filter((x) => x !== cur && x.times.length >= r && x.splits[r - 1]);
+      if (prev.length) {
+        const ld = prev.reduce((a, b) => (this.sumTimes(a, r) <= this.sumTimes(b, r) ? a : b));
+        return { c: ld, value: this.sumTimes(ld, r) + ld.splits[r - 1][k], final: this.sumTimes(ld, r) + ld.times[r - 1], projected: true };
+      }
+    }
+    return null;
+  }
+
+  // through a yellow timing line: the split time, and how it compares with the leader's
+  passSplit(t) {
+    const sl = this.sl, cr = this.cur, k = sl.split++;
+    const time = t - sl.startT;
+    sl.splits.push(time);
+    const mine = this.sumTimes(cr, this.run - 1) + time;
+    const ref = this.splitRef(k);
+    const d = ref ? mine - ref.value : null;
+    sl.splitNote = { k, d, mine, t: 0 };
+    if (d == null) this.ctx.hud.flash(`Split ${k + 1}: ${mine.toFixed(2)} s`, '#fff1d6');
+    else this.ctx.hud.flash(Math.abs(d) < 0.005 ? `Split ${k + 1}: level with ${ref.c.c.short}` : `Split ${k + 1}: ${d <= 0 ? '−' : '+'}${Math.abs(d).toFixed(2)} ${d <= 0 ? 'ahead of' : 'behind'} ${ref.c.c.short}`, d <= 0 ? '#7be495' : '#ff8a65');
+    this.ctx.sound.thump(0.15);
+  }
+
   finishAll() {
     this.phase = 'done'; this.t = 0;
     this.cur = null;
@@ -520,7 +579,9 @@ class Bobsled {
   updateCard() {
     const cr = this.cur;
     const live = cr && this.sl && this.sl.startT != null && this.phase !== 'finished' ? ` · ${(this.ctx.time() - this.sl.startT).toFixed(1)} s` : '';
-    const line = cr ? `Run ${this.run} of ${this.runs}${cr.times.length ? ` · ${cr.times.map((x) => x.toFixed(2)).join(' + ')}` : ''}${live}${cr.bot && this.crews.some((x) => x.c.human) ? ' · action: fast-forward' : ''}` : 'Final times';
+    const sn = this.sl && this.sl.splitNote && this.phase === 'run' ? this.sl.splitNote : null;
+    const split = sn ? ` · split ${sn.k + 1} ${sn.d == null ? sn.mine.toFixed(2) : `${sn.d <= 0 ? '−' : '+'}${Math.abs(sn.d).toFixed(2)}`}` : '';
+    const line = cr ? `Run ${this.run} of ${this.runs}${cr.times.length ? ` · ${cr.times.map((x) => x.toFixed(2)).join(' + ')}` : ''}${live}${split}${cr.bot && this.crews.some((x) => x.c.human) ? ' · action: fast-forward' : ''}` : 'Final times';
     const ranked = [...this.crews].filter((x) => x.times.length).sort((a, b) => (b.times.length - a.times.length) || (a.total - b.total));
     this.card.set(cr ? cr.c : null, line, ranked.map((x) => ({ c: x.c, text: fmtTime(x.total), me: x === cr })));
   }
@@ -675,10 +736,20 @@ class Bobsled {
   }
 
   // ---------------------------------------------------------------- cinematics (the course flight is the fly-in)
+  // past the row where the crews park, the sleds lined up nose-first in front of the podium
   ceremonySpot() {
     const f = this.frameAt(this.track.finishS + 30);
-    const x = f.c.x + f.r.x * (RT + 26), z = f.c.z + f.r.z * (RT + 26);
-    return { x, y: 0, z, ry: Math.atan2(f.r.x, f.r.z), style: 'boxes', gear: 'helmet', yaw: 0.3, pitch: 0.3, width: 52 };
+    const x = f.c.x + f.r.x * (RT + 52), z = f.c.z + f.r.z * (RT + 52);
+    const ry = Math.atan2(f.r.x, f.r.z), yaw = ry + 0.3;
+    const cx = Math.sin(yaw), cz = Math.cos(yaw), n = this.crews.length;
+    this.crews.forEach((c, k) => {
+      const o = (k - (n - 1) / 2) * 9;
+      const m = this.tmp.m.makeRotationY(Math.atan2(-cz, cx) + (k - (n - 1) / 2) * 0.12);
+      m.setPosition(x + cx * 16 + cz * o, 0, z + cz * 16 - cx * o);
+      c.sled.matrix.copy(m);
+      c.sled.matrixWorldNeedsUpdate = true;
+    });
+    return { x, y: 0, z, ry, style: 'boxes', gear: 'helmet', yaw: 0.3, pitch: 0.3, width: 56 };
   }
 
   dispose() {
@@ -695,7 +766,7 @@ export default {
   how: [
     { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to push the sled off: a quick, steady beat keeps the needle in the green, and a faster push is a faster start.' },
     { verb: 'Timing', text: 'Tap <b>action</b> to jump in, as late as you dare before the push zone ends.' },
-    { verb: 'Steer', text: 'Hold <b>left</b> or <b>right</b> to keep the sled on the <b>red line</b>: left alone it swings up too high in the bends. Two runs each with one or two crews (times add up), one run with more.' },
+    { verb: 'Steer', text: 'Hold <b>left</b> or <b>right</b> to keep the sled on the <b>red line</b>: left alone it swings up too high in the bends. Two runs, the times add up; the second goes in reverse order, the leader last. At the <b>yellow lines</b> you see your split time against the leader.' },
   ],
   helpers: {
     little: 'Tap <b>any button</b> on a steady beat to push. You <b>jump in by yourself</b>, and the sled <b>steers itself</b>.',
