@@ -16,3 +16,12 @@
   Wanted: the rider rides out of the pipe at the end. Fix idea: after `XEND`, let the energy drain so the
   rider settles to the bottom, carry on past the end of the U onto a short flat run-out, skid to a stop
   with a little spray, then cheer; the score message and the next rider wait for that.
+- **Bobsled: always two runs, reverse order, split times against the leader.** Today it is two runs
+  only for one or two crews (`RUNS_FEW`/`RUNS_MANY`), one run with three or four, and there are no split
+  times. Wanted:
+  - two runs for every field size, times added up (check the event stays a sensible length with four
+    crews: about 30 s a run, so ~4 min plus fast-forward for computer crews);
+  - the second run goes in reverse order of the standings after run 1 (leader last);
+  - split times at a few intermediate points (e.g. 3-4 timing lines on the track, plus the start
+    time), shown as + / − against the current leader's split (green ahead, red behind), on the HUD and
+    as a flash when passing each line; in run 2 the comparison uses the leader's combined time.
