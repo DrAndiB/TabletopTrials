@@ -184,6 +184,25 @@ export class Sprint {
     text('FINISH', FINISH + 18, -2 * LANE - 3.6, 54, -0.03, 0.9);
     for (const d of [50, 100, 150, 200, 250]) text(String(d), d, -2 * LANE - 3.4, 34, 0, 0.6);
     for (let lane = 0; lane < 4; lane++) for (const ax of [70, 170, 250]) text('>>', ax + lane * 6, laneZ(lane), 40, 0, 0.35);
+    // the sprint's three parts in coloured chalk: smooth out of the blocks, a steady beat, dig in at the end
+    if (this.zones) {
+      const band = (x0, x1, col, label, sub) => {
+        g.save();
+        g.fillStyle = col.replace('A', '0.26'); g.fillRect(X(x0), Z(-2 * LANE), X(x1) - X(x0), Z(2 * LANE) - Z(-2 * LANE));
+        // hatched chalk across the band, and a bold line at its start
+        g.strokeStyle = col.replace('A', '0.45'); g.lineWidth = 5; g.lineCap = 'round';
+        for (let z = -2 * LANE; z < 2 * LANE; z += 2.2) { g.beginPath(); g.moveTo(X(x0) + (r() - 0.5) * 3, Z(z)); g.lineTo(X(x0) + 14 + (r() - 0.5) * 3, Z(z + 1.6)); g.stroke(); }
+        g.strokeStyle = col.replace('A', '0.9'); g.lineWidth = 12;
+        g.beginPath(); for (let k = 0; k <= 12; k++) { const z = -2 * LANE + (k / 12) * 4 * LANE; const xx = X(x0) + Math.sin(k * 1.7) * 2.5; if (k) g.lineTo(xx, Z(z)); else g.moveTo(xx, Z(z)); } g.stroke();
+        g.restore();
+        g.save(); g.translate(X(x0) + 14, Z(-2 * LANE - 3.6)); g.font = '40px "Lilita One", Impact, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+        g.fillStyle = col.replace('A', '0.95'); g.fillText(label, 0, 0);
+        g.font = '26px Rubik, sans-serif'; g.fillStyle = 'rgba(255,255,255,0.75)'; g.fillText(sub, 0, 34); g.restore();
+      };
+      band(4, DRIVE_X, 'rgba(123,228,149,A)', 'SMOOTH', 'out of the blocks: easy steps');
+      band(DRIVE_X, FATIGUE_X, 'rgba(255,201,60,A)', 'STEADY', 'top speed: keep the beat');
+      band(FATIGUE_X, FINISH, 'rgba(255,138,101,A)', 'DIG IN!', 'a little faster now');
+    }
     // doodles: a star, a smiling sun, a heart
     const star = (x, z, R0) => { const pts = []; for (let i = 0; i <= 10; i++) { const a = -Math.PI / 2 + (i * Math.PI) / 5, rr = i % 2 ? R0 * 0.45 : R0; pts.push([X(x) + Math.cos(a) * rr, Z(z) + Math.sin(a) * rr]); } chalk(pts, 5, 0.75); };
     star(-28, -12, 26); star(FINISH + 40, 14, 30); star(140, 25, 16);
@@ -602,7 +621,9 @@ export class Sprint {
     for (let i = 0; i < this.runners.length; i++) {
       const ru = this.runners[i];
       // which part of the race this runner is in
+      const zone0 = ru.zone;
       ru.zone = !this.zones ? 'top' : ru.x < DRIVE_X ? 'drive' : ru.x < FATIGUE_X ? 'top' : 'tired';
+      if (ru.c.human && ru.zone !== zone0 && ru.started && this.zones) ctx.hud.flash(`${ru.c.short}: ${ru.zone === 'top' ? 'steady beat now' : 'dig in: a bit faster!'}`, ru.zone === 'top' ? '#ffc93c' : '#ff8a65');
       ru.rhythm.target = this.target * (ru.zone === 'drive' ? DRIVE_TARGET : ru.zone === 'tired' ? FATIGUE_TARGET : 1);
       if (ru.bot && !ru.finished) {
         const pace = BOT_PACE[ctx.skillName] || BOT_PACE.normal;
@@ -919,6 +940,18 @@ export class Sprint {
     R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: c.width * 2.2 });
     R.setFocus(0.48, P === 'race' || P === 'finishing' ? 0.24 : 0.2, 0.9);
   }
+
+  // ---------------------------------------------------------------- cinematics
+  get room() { return 'The front hall, on a sunny morning'; }
+  flyIn() {
+    return [
+      { x: DOOR.x, y: 92, z: -60, yaw: 0.55, pitch: 0.02, width: 120 },
+      { x: 200, y: 70, z: -60, yaw: 0.15, pitch: 0.12, width: 260 },
+      { x: 60, y: 12, z: 0, yaw: 0.4, pitch: 0.32, width: 150 },
+    ];
+  }
+  // just past the finish line, the shoebox stands and the front door behind
+  ceremonySpot() { return { x: FINISH + 32, y: 0.4, z: 4, style: 'shoebox', gear: 'sprint', yaw: -0.3, pitch: 0.13, width: 50 }; }
 
   dispose() {
     for (const ru of this.runners) ru.fig.dispose();

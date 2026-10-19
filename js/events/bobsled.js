@@ -428,6 +428,14 @@ class Bobsled {
         if (sl.s >= PUSH) {
           if (!sl.inside) { this.jumpIn(true); }
           this.phase = 'run'; this.t = 0;
+          // the start time: from the clock beam to the end of the push, the best so far beside it
+          const st = sl.startT != null ? now - sl.startT : null;
+          if (st != null) {
+            const best = this.bestStart;
+            if (cr.c.human) this.ctx.hud.flash(`${cr.c.short}: start ${st.toFixed(2)} s${best != null ? (st <= best ? ' · best so far!' : ` · best ${best.toFixed(2)}`) : ''} · top push ${Math.round((sl.v / VPUSH) * 100)}%`, best == null || st <= best ? '#7be495' : '#ffc93c');
+            this.bestStart = best == null ? st : Math.min(best, st);
+            cr.starts = (cr.starts || []).concat(st);
+          }
         }
       }
     } else if (this.phase === 'run') {
@@ -604,6 +612,11 @@ class Bobsled {
     // over the sled: the push beat, then when to jump in, then how it went
     const note = sl.note && sl.note.t < 1.4 ? `<span class="pill" style="--tc:${sl.note.col}">${sl.note.text}</span><br>` : '';
     let html = note;
+    // in the run: which way to steer when the sled is off the red line
+    if (ph === 'run' && sl.star != null && !sl.little) {
+      const err = sl.star - sl.phi;
+      if (Math.abs(err) > 0.16) html += `<span class="pill big" style="--tc:${Math.abs(err) > 0.35 ? '#ff8a65' : '#ffc93c'}">${err < 0 ? '◀ steer left' : 'steer right ▶'}</span>`;
+    }
     if (!sl.inside && ph !== 'run') {
       const zw = winFor(cr.c, JUMP_ZONE), inZone = sl.s >= PUSH - zw;
       const toGo = Math.max(0, PUSH - zw - sl.s);
@@ -661,6 +674,13 @@ class Bobsled {
     R.setFocus(0.45, 0.4, 0.6);
   }
 
+  // ---------------------------------------------------------------- cinematics (the course flight is the fly-in)
+  ceremonySpot() {
+    const f = this.frameAt(this.track.finishS + 30);
+    const x = f.c.x + f.r.x * (RT + 26), z = f.c.z + f.r.z * (RT + 26);
+    return { x, y: 0, z, ry: Math.atan2(f.r.x, f.r.z), style: 'boxes', gear: 'helmet', yaw: 0.3, pitch: 0.3, width: 52 };
+  }
+
   dispose() {
     for (const c of this.crews) c.fig.dispose();
     this.ctx.sound.setLoop('hiss', 0);
@@ -673,7 +693,7 @@ export default {
   venue: 'The attic on a snowy day: poster tubes cut in half and frosted with icing sugar, on stacks of books from the toy chest to the floor.',
   loading: 'Taping the tubes together…',
   how: [
-    { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to push the sled off.' },
+    { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to push the sled off: a quick, steady beat keeps the needle in the green, and a faster push is a faster start.' },
     { verb: 'Timing', text: 'Tap <b>action</b> to jump in, as late as you dare before the push zone ends.' },
     { verb: 'Steer', text: 'Hold <b>left</b> or <b>right</b> to keep the sled on the <b>red line</b>: left alone it swings up too high in the bends. Two runs each with one or two crews (times add up), one run with more.' },
   ],

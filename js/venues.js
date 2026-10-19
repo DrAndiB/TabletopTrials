@@ -7,6 +7,11 @@ import { BufferGeometryUtils } from '../vendor/three.bundle.js';
 import * as TX from './textures.js';
 import { rng, clamp, TAU } from './util.js';
 
+// things that give light are brighter than white (HDR), so the bloom pass picks out them alone
+const GLOW = 3;
+const hdr = (k = GLOW) => new THREE.Color(k, k, k);
+import { letterBlock } from './props.js';
+
 // ---------- shared soft glow ----------
 let glowTex = null;
 export function glowTexture() {
@@ -71,7 +76,7 @@ export class Caustics {
 
 // ---------- shafts of light from a window ----------
 // Each beam is two crossed planes with a soft gradient, so it reads from any side.
-export function sunbeams(group, { from, dir, length = 150, width = 16, n = 3, spread = 18, color = 0xffe6b0, opacity = 0.09, seed = 3 }) {
+export function sunbeams(group, { from, dir, length = 150, width = 16, n = 3, spread = 18, color = 0xffe6b0, opacity = 0.09, seed = 3, motes = 160 }) {
   const c = TX.makeCanvas(32, 128), g = c.getContext('2d');
   const along = g.createLinearGradient(0, 0, 0, 128);
   along.addColorStop(0, 'rgba(255,255,255,0)'); along.addColorStop(0.12, 'rgba(255,255,255,1)'); along.addColorStop(0.7, 'rgba(255,255,255,0.55)'); along.addColorStop(1, 'rgba(255,255,255,0)');
@@ -98,7 +103,33 @@ export function sunbeams(group, { from, dir, length = 150, width = 16, n = 3, sp
     }
   }
   group.add(beams);
-  return { beams, mat, update(t) { mat.opacity = opacity * (0.85 + 0.15 * Math.sin(t * 0.7)); } };
+  // dust motes drifting in the light
+  const mp = new Float32Array(motes * 3), mc = new Float32Array(motes * 3), base = [], up = new THREE.Vector3(), side = new THREE.Vector3(), out = new THREE.Vector3();
+  side.crossVectors(d, Math.abs(d.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0)).normalize();
+  up.crossVectors(side, d).normalize();
+  for (let k = 0; k < motes; k++) {
+    const along = length * (0.08 + r() * 0.75), lane = Math.floor(r() * n);
+    base.push({ along, a: (r() - 0.5) * width * 0.8 + (lane - (n - 1) / 2) * spread, b: (r() - 0.5) * width * 0.8, ph: r() * TAU, sp: 0.15 + r() * 0.3, tw: 0.5 + r() * 1.5 });
+  }
+  const mg = new THREE.BufferGeometry();
+  mg.setAttribute('position', new THREE.BufferAttribute(mp, 3).setUsage(THREE.DynamicDrawUsage));
+  mg.setAttribute('color', new THREE.BufferAttribute(mc, 3).setUsage(THREE.DynamicDrawUsage));
+  const dust = new THREE.Points(mg, new THREE.PointsMaterial({ size: 0.9, map: glowTexture(), vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, color }));
+  dust.frustumCulled = false; dust.renderOrder = 5;
+  group.add(dust);
+  const moveDust = (t) => {
+    base.forEach((m, k) => {
+      const w = t * m.sp + m.ph;
+      out.set(from[0], from[1], from[2]).addScaledVector(d, m.along + Math.sin(w * 0.7) * 3)
+        .addScaledVector(side, m.a + Math.sin(w) * 2.5).addScaledVector(up, m.b + Math.cos(w * 1.3) * 2.5);
+      mp[k * 3] = out.x; mp[k * 3 + 1] = out.y; mp[k * 3 + 2] = out.z;
+      const v = 0.35 + 0.65 * Math.max(0, Math.sin(t * m.tw + m.ph));
+      mc[k * 3] = mc[k * 3 + 1] = mc[k * 3 + 2] = v;
+    });
+    mg.attributes.position.needsUpdate = true; mg.attributes.color.needsUpdate = true;
+  };
+  moveDust(0);
+  return { beams, mat, dust, update(t) { mat.opacity = opacity * (0.85 + 0.15 * Math.sin(t * 0.7)); moveDust(t); } };
 }
 
 // ---------- window panes painted on a canvas (day or night), with optional falling snow ----------
@@ -249,7 +280,7 @@ export class FairyLights {
     this.ph = new Float32Array(n);
     this.sp = new Float32Array(n);
     const pos = new Float32Array(n * 3), col = new Float32Array(n * 3), c = new THREE.Color();
-    const im = new THREE.InstancedMesh(new THREE.SphereGeometry(bulb, 8, 6).scale(1, 1.35, 1), new THREE.MeshBasicMaterial({ color: 0xffffff }), n);
+    const im = new THREE.InstancedMesh(new THREE.SphereGeometry(bulb, 8, 6).scale(1, 1.35, 1), new THREE.MeshBasicMaterial({ color: hdr() }), n);
     const m4 = new THREE.Matrix4();
     for (let i = 0; i < n; i++) {
       const p = curve.getPointAt((i + 0.5) / n);
@@ -288,8 +319,10 @@ export class FairyLights {
 // ---------- crowds that suit the room ----------
 // Instanced, so a whole crowd is a couple of draw calls; update(t, level) makes them hop as excitement rises.
 class HopCrowd {
-  constructor(spots, seed) {
+  // yaw: turns models built facing +x so that, like the plush toys, they face +z at ry = 0
+  constructor(spots, seed, yaw = 0) {
     this.spots = spots;
+    this.yaw = yaw;
     const r = rng(seed);
     this.ph = spots.map(() => r() * TAU);
     this.sp = spots.map(() => 5 + r() * 3);
@@ -302,7 +335,7 @@ class HopCrowd {
       // floating ones just bob on the water; the rest hop as the excitement rises
       const hop = sp.float ? 0.25 * Math.sin(t * 2.1 + this.ph[i]) : Math.max(0, Math.sin(t * this.sp[i] + this.ph[i])) * level * level * sp.size * 0.35;
       const sway = Math.sin(t * 1.3 + this.ph[i]) * (0.05 + level * 0.12);
-      e.set(0, sp.ry || 0, sway, 'YXZ'); q.setFromEuler(e);
+      e.set(0, (sp.ry || 0) + this.yaw, sway, 'YXZ'); q.setFromEuler(e);
       p.set(sp.x, (sp.y || 0) + hop, sp.z);
       const k = sp.size / 10, squash = 1 + (hop > 0 ? 0.04 : -0.03) * level;
       s.set(k, k * squash, k);
@@ -315,7 +348,7 @@ class HopCrowd {
 
 // rubber ducks (yellow mostly, the odd pink, blue or green one) along a bath shelf and the floor
 export function duckCrowd(group, spots, seed = 3) {
-  const crowd = new HopCrowd(spots, seed);
+  const crowd = new HopCrowd(spots, seed, -Math.PI / 2);
   // body tinted per duck; beak and eyes the same for all. Sized for size 10.
   const body = new THREE.SphereGeometry(4.2, 20, 14).scale(1.25, 0.82, 1).translate(0, 3.4, 0);
   const head = new THREE.SphereGeometry(2.7, 18, 12).translate(2.9, 7.7, 0);
@@ -374,7 +407,7 @@ export function gingerCrowd(group, spots, seed = 5) {
 
 // snowmen: three snowballs, a carrot, coal eyes and buttons, a hat and a scarf in a team-ish colour
 export function snowCrowd(group, spots, seed = 9) {
-  const crowd = new HopCrowd(spots, seed);
+  const crowd = new HopCrowd(spots, seed, -Math.PI / 2);
   const snow = mergeGeos([
     new THREE.SphereGeometry(4.2, 18, 14).translate(0, 3.8, 0),
     new THREE.SphereGeometry(3.2, 18, 14).translate(0, 9.3, 0),
@@ -403,7 +436,7 @@ export function snowCrowd(group, spots, seed = 9) {
 
 // boiled eggs in egg cups, with drawn-on faces; a few wear knitted cosies
 export function eggCrowd(group, spots, seed = 11) {
-  const crowd = new HopCrowd(spots, seed);
+  const crowd = new HopCrowd(spots, seed, -Math.PI / 2);
   const r = rng(seed);
   const cupG = new THREE.LatheGeometry([[0.01, 0], [2.6, 0], [2.6, 0.6], [1.2, 1.4], [1.1, 2.6], [2.8, 4.2], [3.2, 6.4], [2.9, 6.6], [0.01, 4.6]].map(([x, y]) => new THREE.Vector2(x, y)), 24);
   const eggG = new THREE.SphereGeometry(2.7, 20, 16).scale(1, 1.32, 1).translate(0, 8.3, 0);
@@ -483,7 +516,7 @@ export function robotCrowd(group, spots, seed = 13) {
   const n = spots.length, r = rng(seed), c = new THREE.Color(), cols = [0xd9472b, 0x2f6fe0, 0xf2c230, 0x2fae5a, 0xc8ccd2, 0xef7d2c];
   const bm = new THREE.InstancedMesh(body, new THREE.MeshStandardMaterial({ metalness: 0.55, roughness: 0.35 }), n);
   const tm = new THREE.InstancedMesh(trim, new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.5, roughness: 0.3 }), n);
-  const lm = new THREE.InstancedMesh(lamp, new THREE.MeshBasicMaterial(), n);
+  const lm = new THREE.InstancedMesh(lamp, new THREE.MeshBasicMaterial({ color: hdr() }), n);
   spots.forEach((sp, i) => { bm.setColorAt(i, c.set(cols[Math.floor(r() * cols.length)])); lm.setColorAt(i, c.set(0xff4a3a)); });
   for (const m of [bm, tm, lm]) { m.castShadow = m !== lm; m.receiveShadow = true; m.frustumCulled = false; group.add(m); }
   crowd.meshes = [bm, tm, lm];
@@ -499,7 +532,7 @@ export function robotCrowd(group, spots, seed = 13) {
 
 // penguins: black back, white front, orange beak and feet, a few in bobble hats
 export function penguinCrowd(group, spots, seed = 17) {
-  const crowd = new HopCrowd(spots, seed);
+  const crowd = new HopCrowd(spots, seed, -Math.PI / 2);
   const back = mergeGeos([
     new THREE.SphereGeometry(3.6, 18, 14).scale(1, 1.45, 0.95).translate(0, 5.6, 0),
     new THREE.SphereGeometry(2.5, 16, 12).translate(0.2, 10.6, 0),
@@ -561,7 +594,7 @@ export class Fireplace {
     f.fillStyle = gr; f.beginPath(); f.moveTo(32, 2); f.quadraticCurveTo(64, 80, 50, 120); f.lineTo(14, 120); f.quadraticCurveTo(0, 80, 32, 2); f.fill();
     const flameTex = TX.toTexture(fc, { wrap: false });
     for (let k = 0; k < 5; k++) {
-      const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: flameTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+      const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: flameTex, color: hdr(2.2), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
       m.position.set((k - 2) * ow * 0.14, 12, 9); m.scale.set(10, 20, 1); this.root.add(m);
       this.flames.push({ m, ph: k * 1.7, s: 0.8 + (k % 2) * 0.3 });
     }
@@ -597,7 +630,7 @@ export class ChristmasTree {
     const tiers = [[h * 0.36, h * 0.42, h * 0.32], [h * 0.28, h * 0.36, h * 0.55], [h * 0.19, h * 0.3, h * 0.76]];
     for (const [rad, th, y] of tiers) { const c = new THREE.Mesh(new THREE.ConeGeometry(rad, th, 14, 2), green); c.position.y = y; c.castShadow = true; c.receiveShadow = true; this.root.add(c); }
     const sc = TX.makeCanvas(64), sg = sc.getContext('2d'); sg.fillStyle = '#ffd34a'; sg.beginPath(); for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + (k * Math.PI) / 5, rr = k % 2 ? 12 : 30; sg.lineTo(32 + Math.cos(a) * rr, 32 + Math.sin(a) * rr); } sg.fill();
-    const star = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), new THREE.MeshBasicMaterial({ map: TX.toTexture(sc, { wrap: false }), transparent: true, alphaTest: 0.4, side: THREE.DoubleSide })); star.position.y = h * 0.93 + 5; star.userData.live = true; this.root.add(star); this.star = star;
+    const star = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), new THREE.MeshBasicMaterial({ map: TX.toTexture(sc, { wrap: false }), color: hdr(2.4), transparent: true, alphaTest: 0.4, side: THREE.DoubleSide })); star.position.y = h * 0.93 + 5; star.userData.live = true; this.root.add(star); this.star = star;
     // baubles on the surface of the cones
     const baubles = [];
     const bc = [0xd9262b, 0xf2c230, 0x2f6fe0, 0xe8e2d4, 0xd84f9a];
@@ -775,6 +808,136 @@ export class Dog {
     this.wag += ((excite > 0.5 ? 1 : 0) - this.wag) * (1 - Math.exp(-3 * dt));
     this.tail.rotation.y = -1.1 + this.wag * 0.5 * Math.sin(t * 14);
   }
+}
+
+// ---------- podiums for the medal ceremony, built from whatever the room has to hand ----------
+// Returns { group, tops: [{x, y, z}] by place (0 = gold) }. The podium faces +z, gold in the middle.
+const POD_X = [0, -6.8, 6.8], POD_H = [4.6, 3.4, 2.4];
+export function podium(K, style = 'blocks') {
+  const group = new THREE.Group(), r = rng(31);
+  const add = (geo, mat, x, y, z, ry = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.y = ry; m.castShadow = true; m.receiveShadow = true; group.add(m); return m; };
+  const std = (color, rough = 0.6, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: rough, ...extra });
+  const phys = (color, extra = {}) => new THREE.MeshPhysicalMaterial({ color, roughness: 0.4, clearcoat: 0.6, ...extra });
+  // a big painted number on the front of each step
+  const label = (place, x, y, z, w = 4.4, col = '#1f1a17') => {
+    const c = TX.makeCanvas(128), g = c.getContext('2d');
+    g.fillStyle = col; g.font = '112px "Lilita One", Impact, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(String(place + 1), 64, 70);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.55, w * 0.55), new THREE.MeshBasicMaterial({ map: TX.toTexture(c, { wrap: false }), transparent: true, depthWrite: false, toneMapped: false }));
+    m.position.set(x, y, z); m.renderOrder = 2; group.add(m);
+  };
+  const tops = [];
+  for (let p = 0; p < 3; p++) {
+    const x = POD_X[p], H = POD_H[p];
+    let top = H;
+    switch (style) {
+      case 'shoebox': {
+        const cols = [[0xf2c230, 0xd9472b], [0xd9dde3, 0x2f6fe0], [0xcd7f45, 0xf7f2e8]][p];
+        add(new THREE.BoxGeometry(6, H - 0.6, 6), std(cols[0], 0.7), x, (H - 0.6) / 2, 0);
+        add(new THREE.BoxGeometry(6.4, 0.9, 6.4), std(cols[1], 0.6), x, H - 0.45, 0);
+        label(p, x, H / 2 - 0.3, 3.02, 4.4);
+        break;
+      }
+      case 'float': {
+        // an inflatable raft: puffy striped tubes in pool-toy colours
+        const cols = [0xff6f9a, 0xffd23a, 0x5fc9f0];
+        const c = TX.makeCanvas(64, 16), g = c.getContext('2d');
+        for (let k = 0; k < 8; k++) { g.fillStyle = k % 2 ? '#ffffff' : '#' + cols[p].toString(16).padStart(6, '0'); g.fillRect(k * 8, 0, 8, 16); }
+        const mat = phys(0xffffff, { map: TX.toTexture(c, { repeat: [1, 1] }), roughness: 0.25, clearcoat: 1 });
+        const m = add(new THREE.CylinderGeometry(3.2, 3.4, H, 24), mat, x, H / 2, 0);
+        const rim = add(new THREE.TorusGeometry(3.2, 0.55, 10, 28).rotateX(Math.PI / 2), phys(0xffffff, { roughness: 0.2, clearcoat: 1 }), x, H, 0);
+        void m; void rim;
+        label(p, x, H / 2, 3.45, 4.4, '#ffffff');
+        if (p === 0) add(new THREE.TorusGeometry(13.5, 1.7, 14, 48).rotateX(Math.PI / 2), phys(0xffffff, { map: TX.toTexture(c, { repeat: [6, 1] }), roughness: 0.25, clearcoat: 1 }), 0, 0.6, 0);
+        top = H + 0.5;
+        break;
+      }
+      case 'books': {
+        let y = 0;
+        const cols = [0xb5473a, 0x2f4f7a, 0x2fae5a, 0xf2c230, 0x8a55c9, 0xef7d2c, 0x3d7bd9];
+        while (y < H - 0.1) {
+          const t = Math.min(H - y, 0.7 + r() * 0.5);
+          add(new K.RoundedBoxGeometry(6.4 + r() * 0.8, t, 5 + r() * 0.8, 2, 0.12), std(cols[(r() * cols.length) | 0], 0.6), x + (r() - 0.5) * 0.4, y + t / 2, (r() - 0.5) * 0.4, (r() - 0.5) * 0.15);
+          y += t;
+        }
+        label(p, x, H / 2, 3.2, 4.2, '#fff6dc');
+        break;
+      }
+      case 'cushions': {
+        const cols = [[0xd9a73a, 0xc4655a], [0x2f6b6b, 0x9fd1c4], [0xc4655a, 0xf2e3c4]][p];
+        const n = p === 0 ? 3 : p === 1 ? 2 : 2, t = H / n;
+        for (let k = 0; k < n; k++) add(new K.RoundedBoxGeometry(6.4, t, 6.4, 4, Math.min(1.1, t * 0.45)), phys(cols[k % 2], { roughness: 0.9, clearcoat: 0, sheen: 1, sheenColor: 0xffffff }), x, t * (k + 0.5), 0, (r() - 0.5) * 0.2);
+        label(p, x, H / 2, 3.25, 4.2, '#fff6dc');
+        break;
+      }
+      case 'gifts': {
+        const cols = [[0xd9262b, 0xf2c230], [0x2f6fe0, 0xffffff], [0x2fae5a, 0xd9262b]][p];
+        add(new THREE.BoxGeometry(6, H, 6), std(cols[0], 0.45), x, H / 2, 0);
+        const rib = std(cols[1], 0.35);
+        add(new THREE.BoxGeometry(6.08, H + 0.04, 1), rib, x, H / 2, 0);
+        add(new THREE.BoxGeometry(1, H + 0.04, 6.08), rib, x, H / 2, 0);
+        label(p, x - 1.7, H / 2, 3.05, 3, '#fff6dc');
+        top = H;
+        break;
+      }
+      case 'biscuits': {
+        let y = 0, k = 0;
+        while (y < H - 0.1) { add(new THREE.CylinderGeometry(3.1, 3.1, 0.62, 28), std(k % 3 === 2 ? 0x5a3220 : 0xd59a55, 0.85), x + (r() - 0.5) * 0.4, y + 0.31, (r() - 0.5) * 0.4); y += 0.62; k++; }
+        top = y;
+        label(p, x, top + 0.02, 0, 4.6, '#fff6dc');
+        group.children[group.children.length - 1].rotation.x = -Math.PI / 2;
+        break;
+      }
+      case 'sugar': {
+        const n = Math.round(H / 1.5), cubes = [];
+        for (let k = 0; k < n; k++) for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) cubes.push([x - 0.78 + i * 1.56, 0.75 + k * 1.5, -0.78 + j * 1.56]);
+        const m = new THREE.InstancedMesh(new K.RoundedBoxGeometry(1.5, 1.5, 1.5, 2, 0.18), std(0xfbfaf6, 0.95), cubes.length);
+        const m4 = new THREE.Matrix4();
+        cubes.forEach(([cx, cy, cz], i) => m.setMatrixAt(i, m4.makeTranslation(cx + (r() - 0.5) * 0.08, cy, cz + (r() - 0.5) * 0.08)));
+        m.castShadow = true; m.receiveShadow = true; group.add(m);
+        top = n * 1.5;
+        label(p, x, top / 2, 1.6, 2.8);
+        if (p === 0) add(new THREE.CylinderGeometry(14, 11, 0.6, 40), phys(0xf7f4ee, { roughness: 0.2, clearcoat: 1 }), 0, -0.3, 0);
+        break;
+      }
+      case 'boxes': {
+        const c = TX.makeCanvas(128), g = c.getContext('2d');
+        g.fillStyle = '#c69a62'; g.fillRect(0, 0, 128, 128); g.fillStyle = 'rgba(214,170,104,0.9)'; g.fillRect(52, 0, 24, 128);
+        add(new THREE.BoxGeometry(6.4, H, 6.4), std(0xffffff, 0.9, { map: TX.toTexture(c, { wrap: false }) }), x, H / 2, 0, (r() - 0.5) * 0.12);
+        label(p, x, H / 2, 3.25, 4.2);
+        break;
+      }
+      case 'tins': {
+        const n = p === 0 ? 2 : 1, t = H / n;
+        const cols = [0xd9472b, 0x2f6fe0, 0xf2c230, 0x2fae5a];
+        for (let k = 0; k < n; k++) {
+          add(new THREE.CylinderGeometry(3, 3, t - 0.1, 28), new THREE.MeshStandardMaterial({ color: 0xc8ccd2, metalness: 0.8, roughness: 0.3 }), x, t * k + t / 2, 0);
+          add(new THREE.CylinderGeometry(3.04, 3.04, t * 0.5, 28, 1, true), phys(cols[(p + k) % 4]), x, t * k + t / 2, 0);
+        }
+        label(p, x, H / 2, 3.1, 3.6, '#ffffff');
+        break;
+      }
+      case 'bricks': {
+        let y = 0, k = 0;
+        while (y < H - 0.1) {
+          for (let i = 0; i < 2; i++) add(new K.RoundedBoxGeometry(k % 2 ? 6.4 : 3.1, 1.1, k % 2 ? 3.1 : 6.4, 2, 0.12), std([0xa8513a, 0xb55e44, 0x9a4a36][(k + i) % 3], 0.85), x + (k % 2 ? 0 : (i - 0.5) * 3.2), y + 0.55, k % 2 ? (i - 0.5) * 3.2 : 0);
+          y += 1.1; k++;
+        }
+        top = y;
+        label(p, x, top / 2, 3.3, 3.6, '#fff6dc');
+        break;
+      }
+      default: {
+        // letter blocks
+        const s = p === 0 ? H / 2 : H;
+        const n = p === 0 ? 2 : 1;
+        for (let k = 0; k < n; k++) { const b = letterBlock([String(p + 1)], s, 40 + p * 3 + k); b.position.set(x, s * (k + 0.5), 0); b.rotation.y = (r() - 0.5) * 0.2; group.add(b); }
+        break;
+      }
+    }
+    tops[p] = { x, y: top, z: 0 };
+  }
+  return { group, tops };
 }
 
 // ---------- baking: one draw call per material for all the still things in a room ----------

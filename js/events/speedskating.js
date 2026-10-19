@@ -41,6 +41,23 @@ function lanePoint(r, d) {
   return { x: -SX - r * Math.sin(a), z: -r * Math.cos(a), dir: Math.PI + a, bend: 2 };
 }
 
+// A fair oval: every lane spends the same share of a lap on the straights and in the bends, so skaters
+// with the same progress are side by side (the outer lanes simply move faster round the bends, like
+// they do on a real track when the lanes cross over). u = share of a lap from the start of the front straight.
+const RM = R0 + LANE * 2;                                   // the middle of the four lanes
+const F_S = (2 * SX) / (4 * SX + TAU * RM), F_B = 0.5 - F_S; // one straight, one bend
+function ovalAt(r, u) {
+  u = ((u % 1) + 1) % 1;
+  if (u < F_S) return { x: -SX + (u / F_S) * 2 * SX, z: r, dir: 0, bend: 0 };
+  u -= F_S;
+  if (u < F_B) { const a = (u / F_B) * Math.PI; return { x: SX + r * Math.sin(a), z: r * Math.cos(a), dir: a, bend: 1 }; }
+  u -= F_B;
+  if (u < F_S) return { x: SX - (u / F_S) * 2 * SX, z: -r, dir: Math.PI, bend: 0 };
+  u -= F_S;
+  const a = (u / F_B) * Math.PI;
+  return { x: -SX - r * Math.sin(a), z: -r * Math.cos(a), dir: Math.PI + a, bend: 2 };
+}
+
 class SpeedSkating {
   constructor(ctx) {
     this.ctx = ctx;
@@ -176,7 +193,7 @@ class SpeedSkating {
       c.stroke();
     }
     // start / finish line in red icing
-    const sp = lanePoint(R0, START_P * laneLen(R0) / LAP);
+    const sp = ovalAt(R0, START_P / LAP);
     c.strokeStyle = '#e23b2e'; c.lineWidth = 6; c.beginPath(); c.moveTo(px(sp.x), pz(R0)); c.lineTo(px(sp.x), pz(R0 + 4 * LANE)); c.stroke();
     const ice = new THREE.Mesh(new THREE.PlaneGeometry(Lx, W).rotateX(-Math.PI / 2), new THREE.MeshPhysicalMaterial({ map: K.TX.toTexture(ic, { wrap: false }), roughness: 0.28, clearcoat: 0.7, clearcoatRoughness: 0.3, envMapIntensity: 0.35 }));
     ice.position.set(0, Y, 0); ice.receiveShadow = true; g.add(ice);
@@ -194,8 +211,9 @@ class SpeedSkating {
     this.lc = K.TX.makeCanvas(256, 128);
     this.lapTex = K.TX.toTexture(this.lc, { wrap: false });
     const board = new THREE.Mesh(new THREE.PlaneGeometry(18, 9), new THREE.MeshStandardMaterial({ map: this.lapTex, roughness: 0.8 }));
-    board.position.set(0, Y + 6, -2); board.rotation.x = -0.35; board.castShadow = true; g.add(board);
-    for (const x of [-8, 8]) { const st = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 6, 6), K.std({ color: 0xe9d3a8 })); st.position.set(x, Y + 3, -3.6); g.add(st); }
+    this.board = new THREE.Group(); g.add(this.board);
+    board.position.set(0, Y + 6, -2); board.rotation.x = -0.35; board.castShadow = true; this.board.add(board);
+    for (const x of [-8, 8]) { const st = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 6, 6), K.std({ color: 0xe9d3a8 })); st.position.set(x, Y + 3, -3.6); this.board.add(st); }
     this.setLapBoard('2 laps');
   }
 
@@ -240,8 +258,8 @@ class SpeedSkating {
   }
 
   // where along the lane a skater is, and whether it's a bend there
-  at(s) { const L = laneLen(s.r + s.wide * 3); return lanePoint(s.r + s.wide * 3, ((START_P + s.p) / LAP) * L); }
-  bendAhead(s, dp) { const L = laneLen(s.r); return lanePoint(s.r, ((START_P + s.p + dp) / LAP) * L).bend; }
+  at(s) { return ovalAt(s.r + s.wide * 3, (START_P + s.p) / LAP); }
+  bendAhead(s, dp) { return ovalAt(s.r, (START_P + s.p + dp) / LAP).bend; }
 
   botUpdate(s, now) {
     const B = BOT[this.ctx.skillName] || BOT.normal, b = s.bot, pad = s.c.pad;
@@ -456,6 +474,21 @@ class SpeedSkating {
     for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], 2.2, Math.min(dt, 0.1));
     R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: Math.max(200, c.width * 1.5) });
     R.setFocus(0.5, 0.36, 0.7);
+  }
+
+  // ---------------------------------------------------------------- cinematics
+  get room() { return 'The kitchen, on a winter night'; }
+  flyIn() {
+    return [
+      { x: -30, y: 84, z: -70, yaw: 0.05, pitch: 0.04, width: 150 },
+      { x: 120, y: 30, z: -70, yaw: -0.6, pitch: 0.1, width: 100 },
+      { x: 0, y: 5, z: 0, yaw: 0, pitch: 0.62, width: 240 },
+    ];
+  }
+  // on the icing-sugar island in the middle of the rink (in place of the lap board), the gingerbread crowd behind
+  ceremonySpot() {
+    this.board.visible = false;
+    return { x: 0, y: Y + 1, z: 0, style: 'biscuits', gear: 'skate', yaw: 0.25, pitch: 0.16, width: 46 };
   }
 
   dispose() {

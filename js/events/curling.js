@@ -12,6 +12,7 @@ import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles } from '../fx.js';
 import { fitRhythm, winFor, helped } from '../sizes.js';
 import { paneWindow, sunriseSky, eggCrowd } from '../venues.js';
+import { hudKit, Skipper } from './common.js';
 import { clamp, damp, rng, makeNoise2D } from '../util.js';
 
 const R = 1.6;                 // a bottle cap
@@ -265,9 +266,9 @@ class Curling {
   buildCrowd(K, competitors) {
     const spots = [];
     // facing the sheet, turned a little towards the target
-    for (let k = 0; k < 5; k++) spots.push({ x: 166 + k * 9, y: 0, z: -34 + (k % 2) * 3, ry: -1.0, size: 9 + this.r() * 2 });
-    for (let k = 0; k < 4; k++) spots.push({ x: 60 + k * 26, y: 0, z: -40 - (k % 2) * 4, ry: -1.1, size: 10 });
-    for (let k = 0; k < 3; k++) spots.push({ x: 170 + k * 11, y: 0, z: 34 + (k % 2) * 3, ry: 1.1, size: 9 });
+    for (let k = 0; k < 5; k++) spots.push({ x: 166 + k * 9, y: 0, z: -34 + (k % 2) * 3, ry: -0.4, size: 9 + this.r() * 2 });
+    for (let k = 0; k < 4; k++) spots.push({ x: 60 + k * 26, y: 0, z: -40 - (k % 2) * 4, ry: -0.15, size: 10 });
+    for (let k = 0; k < 3; k++) spots.push({ x: 170 + k * 11, y: 0, z: 34 + (k % 2) * 3, ry: Math.PI + 0.4, size: 9 });
     // the crowd: boiled eggs in egg cups, some in knitted cosies
     this.crowd = eggCrowd(K.group, spots, 47);
     [[100, -48], [40, -50], [225, 10]].forEach(([x, z], k) => {
@@ -279,6 +280,8 @@ class Curling {
 
   buildHud() {
     const el = this.ctx.hud.el;
+    // watching a computer curler: action fast-forwards
+    this.skipper = new Skipper(this.ctx, hudKit(this.ctx));
     const style = document.createElement('style');
     style.textContent = `.cu-card{position:absolute;left:12px;top:12px;width:min(260px,42vw);background:rgba(255,244,220,.95);border:3px solid #1f1a17;border-radius:14px;box-shadow:0 3px 0 #1f1a17;padding:8px 10px;font:700 12px/1.25 Rubik,sans-serif;color:#1f1a17}
       .cu-card .who{display:flex;align-items:center;gap:7px;font:400 18px/1.1 "Lilita One",Impact,sans-serif}.cu-card .who img{height:20px;width:30px;object-fit:cover;border:2px solid #1f1a17;border-radius:3px}
@@ -382,12 +385,21 @@ class Curling {
     const rival = this.stones.filter((s) => s.owner !== p && Math.hypot(s.x - TEE, s.z) < 7).sort((a, b) => Math.hypot(a.x - TEE, a.z) - Math.hypot(b.x - TEE, b.z))[0];
     let hit = false;
     if (rival && this.r() < 0.6) { tx = rival.x + 6; tz = rival.z; hit = true; }
-    // search aim and strength on the no-collision model
+    // search aim and strength on the no-collision model; like real curlers they like a curling shot
+    // (each bot has a favourite side), and a path blocked by a cap in front of the target is no good
+    if (p.bot.side == null) p.bot.side = this.r() < 0.5 ? -1 : 1;
+    const blockers = this.stones.filter((s) => s.live && s.x < tx - 3);
     let best = null;
     for (let aim = -AIM_MAX; aim <= AIM_MAX; aim += 0.5) {
+      const straight = Math.abs(aim) < 2.5, wrongSide = Math.sign(aim) !== p.bot.side;
       for (let pw = 0.3; pw <= 1; pw += 0.02) {
         const s = restingPoint(aim, pw, 0);
-        const d = Math.hypot(s.x - tx, s.z - tz);
+        let d = Math.hypot(s.x - tx, s.z - tz) + (straight ? 2.2 : 0) + (wrongSide && !straight ? 0.8 : 0);
+        if (d > (best ? best.d : 1e9)) continue;
+        if (blockers.length && !hit) {
+          const { pts } = pathFor(aim, pw, 4);
+          if (pts.some(([px, pz]) => px < tx - 4 && blockers.some((b) => Math.hypot(b.x - px, b.z - pz) < 2 * R + 0.5))) d += 6;
+        }
         if (!best || d < best.d) best = { aim, pw, d };
       }
     }
@@ -435,6 +447,7 @@ class Curling {
       if (p && i === p.i) q = e;
       if (this.players[i].c.human && e.some((x) => x.b === 'action' && x.down)) skip = true;
     }
+    this.skipper.update(!!(p && p.bot), skip);
     // Little curlers: the aim is straight at the middle, any button holds the strength, and the
     // sweeping happens by itself
     const little = !!p && p.c.human && helped(p.c);
@@ -570,7 +583,7 @@ class Curling {
     const p = this.cur;
     const who = this.hudCard.querySelector('.who'), rd = this.hudCard.querySelector('.rd'), ol = this.hudCard.querySelector('ol');
     if (p) who.innerHTML = `<img src="${p.c.flag}" alt=""><span>${p.c.short}</span>`;
-    rd.textContent = `End ${this.end} of ${this.ends}${p ? ` · cap ${Math.floor(this.throwNo / this.players.length) + 1} of ${this.stonesPer}` : ''}`;
+    rd.textContent = `End ${this.end} of ${this.ends}${p ? ` · cap ${Math.floor(this.throwNo / this.players.length) + 1} of ${this.stonesPer}` : ''}` + (p && p.bot && this.ctx.competitors.some((c) => c.human) ? ' · action: fast-forward' : '');
     const ranked = [...this.players].sort((a, b) => b.total - a.total);
     ol.innerHTML = ranked.map((x, k) => `<li class="${x === p ? 'me' : ''}"><span>${ORD[k]}</span><img src="${x.c.flag}" alt=""><span>${x.c.short}</span><b>${x.total}</b></li>`).join('');
   }
@@ -721,6 +734,22 @@ class Curling {
     for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], rate, Math.min(dt, 0.1));
     RR.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: Math.max(160, c.width * 1.8) });
     RR.setFocus(0.5, 0.3, 0.8);
+  }
+
+  // ---------------------------------------------------------------- cinematics
+  get room() { return 'The kitchen table, at breakfast'; }
+  flyIn() {
+    return [
+      { x: 66, y: 76, z: -100, yaw: 0, pitch: 0.04, width: 160 },
+      { x: 170, y: 10, z: -10, yaw: 0.65, pitch: 0.2, width: 90 },
+      { x: 40, y: 4, z: 0, yaw: -1.2, pitch: 0.4, width: 110 },
+    ];
+  }
+  // on a saucer of sugar cubes, right on the target
+  ceremonySpot() {
+    for (const st of this.stones) if (st.mesh) st.mesh.visible = false;
+    if (this.held) this.held.visible = false;
+    return { x: TEE, y: 0, z: 0, style: 'sugar', gear: 'none', yaw: 0.35, pitch: 0.22, width: 44 };
   }
 
   dispose() {

@@ -62,6 +62,14 @@ The instance:
 - `frame(dt, paused)`: per rendered frame: animation, camera (`ctx.R.orbit(...)` or `ctx.R.look(...)`),
   particles, HUD. Never create materials here (warm-up compiles the scene before the event starts).
 - `dispose()` (optional): anything not under `ctx.kit.group` (DOM, listeners).
+- `flyIn()` (optional): the camera flight through the room before `start()`, as 2-4 orbit keys
+  `{ x, y, z, yaw, pitch, width }`; the last key should sit near the event's opening camera, which the
+  flight blends into (`js/director.js`). `room` names the room for the caption, `flyInTime` sets the length
+  (default 6.5 s). `frame()` already runs during the flight, `update()` does not.
+- `ceremonySpot()` (optional): where the medal ceremony is held, `{ x, y, z, ry?, style, gear, yaw, pitch,
+  width, bob? }` (`style` picks the podium: blocks, shoebox, float, books, cushions, gifts, biscuits, sugar,
+  boxes, tins, bricks; `gear` dresses the medallists). Hide anything here that would be in the way; the
+  event's own figurines are hidden automatically.
 - When it is over: `ctx.finish(results)` with `results[i] = { value, text, short?, sub?, dnf? }` for each
   competitor (value ranks; text shows in results; sub is a small second line).
 

@@ -595,6 +595,17 @@ class Diving {
     R.setFocus(0.5, 0.3, 0.8);
   }
 
+  // ---------------------------------------------------------------- cinematics
+  get room() { return 'The bedroom, at dusk'; }
+  flyIn() {
+    return [
+      { x: -78, y: 132, z: -90, yaw: 0.15, pitch: 0.03, width: 100 },
+      { x: 30, y: 110, z: -60, yaw: -0.15, pitch: 0.1, width: 200 },
+      { x: BX - 10, y: 36, z: 0, yaw: 0.2, pitch: 0.22, width: 150 },
+    ];
+  }
+  ceremonySpot() { return { x: 78, y: 30, z: -112, style: 'books', gear: 'swim', yaw: 0.12, pitch: 0.14, width: 38 }; }
+
   dispose() {
     for (const d of this.divers) d.fig.dispose();
     this.tags?.clear();

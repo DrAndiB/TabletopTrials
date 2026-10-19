@@ -1,8 +1,12 @@
 // WebGL renderer, lighting rig, camera helpers and the tilt-shift "miniature" post effect.
 // Ported from Tabletop Turbo; the camera is free (orbit/look) instead of top-down over a table.
 import * as THREE from '../vendor/three.bundle.js';
-import { EffectComposer, RenderPass, ShaderPass, OutputPass, RoomEnvironment } from '../vendor/three.bundle.js';
+import { EffectComposer, RenderPass, ShaderPass, OutputPass, RoomEnvironment, UnrealBloomPass, GTAOPass } from '../vendor/three.bundle.js';
 import { setMaxAnisotropy } from './textures.js';
+
+// glow: [strength, radius, threshold]; the threshold is in linear light before tone mapping, so only
+// things brighter than a sunlit white wall (bulbs, flames, the sky through a window) glow
+export const BLOOM = [0.5, 0.45, 2.4];
 
 const TiltShiftShader = {
   uniforms: {
@@ -13,12 +17,14 @@ const TiltShiftShader = {
     amount: { value: 1.0 },
     vignette: { value: 0 },
     aspect: { value: 1 },
+    sat: { value: 1 },
+    tint: { value: new THREE.Vector3(1, 1, 1) },
   },
   vertexShader: /* glsl */`
     varying vec2 vUv;
     void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: /* glsl */`
-    uniform sampler2D tDiffuse; uniform vec2 dir; uniform float focus; uniform float band; uniform float amount; uniform float vignette; uniform float aspect;
+    uniform sampler2D tDiffuse; uniform vec2 dir; uniform float focus; uniform float band; uniform float amount; uniform float vignette; uniform float aspect; uniform float sat; uniform vec3 tint;
     varying vec2 vUv;
     void main(){
       float d = abs(vUv.y - focus);
@@ -34,6 +40,8 @@ const TiltShiftShader = {
         float v = 1.0 - vignette * smoothstep(0.35, 1.05, length(q));
         sum.rgb *= v;
       }
+      // the grade: a little richer colour and the venue's tint of the light
+      sum.rgb = max(mix(vec3(dot(sum.rgb, vec3(0.2126, 0.7152, 0.0722))), sum.rgb, sat), 0.0) * tint;
       gl_FragColor = sum;
     }`,
 };
@@ -49,10 +57,12 @@ const TiltShiftDiskShader = {
     amount: { value: 1.0 },
     vignette: { value: 0.32 },
     aspect: { value: 1 },
+    sat: { value: 1 },
+    tint: { value: new THREE.Vector3(1, 1, 1) },
   },
   vertexShader: TiltShiftShader.vertexShader,
   fragmentShader: /* glsl */`
-    uniform sampler2D tDiffuse; uniform vec2 px; uniform float focus; uniform float band; uniform float amount; uniform float vignette; uniform float aspect;
+    uniform sampler2D tDiffuse; uniform vec2 px; uniform float focus; uniform float band; uniform float amount; uniform float vignette; uniform float aspect; uniform float sat; uniform vec3 tint;
     varying vec2 vUv;
     void main(){
       float d = abs(vUv.y - focus);
@@ -71,15 +81,19 @@ const TiltShiftDiskShader = {
         vec2 q = (vUv - 0.5) * vec2(aspect, 1.0);
         sum.rgb *= 1.0 - vignette * smoothstep(0.35, 1.05, length(q));
       }
+      // the grade: a little richer colour and the venue's tint of the light
+      sum.rgb = max(mix(vec3(dot(sum.rgb, vec3(0.2126, 0.7152, 0.0722))), sum.rgb, sat), 0.0) * tint;
       gl_FragColor = sum;
     }`,
 };
 
 // tilt: true/false keeps its meaning for world builders (false = Low); tiltMode picks the shader.
+// bloom: glow around lights, fire and bright windows; ao: ambient occlusion (soft shading in corners
+// and where things touch)
 export const QUALITY = {
-  high: { pr: 2, shadow: 4096, msaa: 4, tilt: true, tiltMode: 'two-pass', grass: 1 },
-  medium: { pr: 1.35, shadow: 2048, msaa: 4, tilt: true, tiltMode: 'one-pass', grass: 0.7 },
-  low: { pr: 1, shadow: 1024, msaa: 0, tilt: false, tiltMode: 'off', grass: 0.35 },
+  high: { pr: 2, shadow: 4096, msaa: 4, tilt: true, tiltMode: 'two-pass', grass: 1, bloom: true, ao: true },
+  medium: { pr: 1.35, shadow: 2048, msaa: 4, tilt: true, tiltMode: 'one-pass', grass: 0.7, bloom: true, ao: false },
+  low: { pr: 1, shadow: 1024, msaa: 0, tilt: false, tiltMode: 'off', grass: 0.35, bloom: false, ao: false },
 };
 
 // Integrated graphics as named by WEBGL_debug_renderer_info (browsers may shorten the name).
@@ -206,6 +220,20 @@ export class GameRenderer {
     const rt = new THREE.WebGLRenderTarget(Math.max(1, size.x), Math.max(1, size.y), { type: THREE.HalfFloatType, samples: this.quality.msaa });
     this.composer = new EffectComposer(r, rt);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
+    const w = Math.max(1, size.x), h = Math.max(1, size.y);
+    this.ao = null; this.bloom = null;
+    if (this.quality.ao) {
+      this.ao = new GTAOPass(this.scene, this.camera, w, h);
+      this.ao.updateGtaoMaterial({ radius: 6, distanceExponent: 1.4, thickness: 4, scale: 1.1, samples: 12 });
+      this.ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
+      this.ao.blendIntensity = this.aoCfg ?? 0.85;
+      this.composer.addPass(this.ao);
+    }
+    if (this.quality.bloom) {
+      const [strength, radius, threshold] = this.bloomCfg || BLOOM;
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), strength, radius, threshold);
+      this.composer.addPass(this.bloom);
+    }
     this.tiltH = new ShaderPass(TiltShiftShader);
     this.tiltV = new ShaderPass(TiltShiftShader);
     this.tiltV.uniforms.vignette.value = 0.32;
@@ -218,7 +246,14 @@ export class GameRenderer {
     this.composer.addPass(this.tiltX);
     this.composer.addPass(new OutputPass());
     this.setFocus(...this.focusCfg);
+    this.setGrade(this.gradeCfg);
     this.resize();
+  }
+
+  // colour grade, applied in the last tilt-shift pass (Medium and High): saturation and an RGB tint
+  setGrade({ sat = 1.1, tint = [1, 1, 1] } = {}) {
+    this.gradeCfg = { sat, tint };
+    for (const p of [this.tiltV, this.tiltX]) { if (!p) continue; p.uniforms.sat.value = sat; p.uniforms.tint.value.set(...tint); }
   }
 
   setLighting(cfg = {}) {
@@ -234,6 +269,12 @@ export class GameRenderer {
     this.scene.fog = cfg.fog ? new THREE.Fog(cfg.fog.color, cfg.fog.near, cfg.fog.far) : null;
     this.shadowRadius = cfg.shadowRadius ?? 3;
     this.sun.shadow.radius = this.shadowRadius;
+    // venues can tune the glow: [strength, radius, threshold], and how strong ambient occlusion is
+    this.bloomCfg = cfg.bloom || BLOOM;
+    if (this.bloom) [this.bloom.strength, this.bloom.radius, this.bloom.threshold] = this.bloomCfg;
+    this.setGrade(cfg.grade);
+    this.aoCfg = cfg.ao ?? 0.85;
+    if (this.ao) this.ao.blendIntensity = this.aoCfg;
   }
 
   resize() {

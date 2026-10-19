@@ -229,7 +229,7 @@ class Swimming {
       const z = -W / 2 + LANE_W * k;
       for (let x = 1.5; x < L; x += 1.6) beads.push({ x, y: WY + 0.2, z, s: 1, color: x < 12 || x > L - 12 ? cols[0] : cols[1 + (Math.floor(x / 10) % 2)] });
     }
-    K.instances(new THREE.SphereGeometry(0.72, 10, 8), K.plastic(0xffffff, 0.3), beads, { colors: true });
+    this.ropes = K.instances(new THREE.SphereGeometry(0.72, 10, 8), K.plastic(0xffffff, 0.3), beads, { colors: true });
     // bunting across the tub before the turn, strung between two toothbrushes
     const flags = [];
     const fc = [0xe23b2e, 0xf2c230, 0x2f6fe0, 0x2fae5a];
@@ -266,11 +266,11 @@ class Swimming {
     const spots = [];
     for (let x = 12; x < L - 6; x += 10.5 + this.r() * 2) {
       if (Math.abs(x - TURN_ZONE[0]) < 5) continue;   // leave room for the bunting pole
-      spots.push({ x, y: RIM, z: -W / 2 - T / 2 - 0.4, ry: -Math.PI / 2 + (this.r() - 0.5) * 0.5, size: 6 + this.r() * 1.4 });
+      spots.push({ x, y: RIM, z: -W / 2 - T / 2 - 0.4, ry: (this.r() - 0.5) * 0.5, size: 6 + this.r() * 1.4 });
     }
-    for (const z of [-15, -3, 9]) spots.push({ x: L + T / 2, y: RIM, z, ry: Math.PI + (this.r() - 0.5) * 0.4, size: 7.5 });
+    for (const z of [-15, -3, 9]) spots.push({ x: L + T / 2, y: RIM, z, ry: -Math.PI / 2 + (this.r() - 0.5) * 0.4, size: 7.5 });
     // and a few bobbing in the bubbles along the back wall, out of the swimmers' way
-    for (let x = 22; x < L - 20; x += 24 + this.r() * 10) spots.push({ x, y: WY - 1.2, z: -W / 2 + 2.6, ry: -Math.PI / 2 + (this.r() - 0.5) * 1.2, size: 4.6 + this.r(), float: true });
+    for (let x = 22; x < L - 20; x += 24 + this.r() * 10) spots.push({ x, y: WY - 1.2, z: -W / 2 + 2.6, ry: (this.r() - 0.5) * 1.2, size: 4.6 + this.r(), float: true });
     for (let k = 0; k < 4; k++) spots.push({ x: L + T + 22 + (k % 2) * 10, y: 0, z: -20 + k * 14, ry: -1.4, size: 12 });
     // the crowd: rubber ducks, mostly yellow, the odd pink, blue or green one
     this.crowd = duckCrowd(K.group, spots, 59);
@@ -586,6 +586,21 @@ class Swimming {
     for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], 2.6, Math.min(dt, 0.1));
     R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: Math.max(170, c.width * 1.6) });
     R.setFocus(0.5, 0.3, 0.8);
+  }
+
+  // ---------------------------------------------------------------- cinematics
+  get room() { return 'The bathroom, on a summer morning'; }
+  flyIn() {
+    return [
+      { x: WIN.x, y: 112, z: -40, yaw: 0.25, pitch: 0.03, width: 110 },
+      { x: L * 0.65, y: 48, z: 0, yaw: 0.7, pitch: 0.3, width: 230 },
+      { x: 18, y: WY, z: 8, yaw: 0.5, pitch: 0.4, width: 110 },
+    ];
+  }
+  // the medallists on an inflatable raft, floating in the middle of the tub
+  ceremonySpot() {
+    if (this.ropes) this.ropes.visible = false;
+    return { x: L / 2, y: WY - 1.2, z: 0, style: 'float', gear: 'swim', bob: true, yaw: 0.35, pitch: 0.24, width: 50 };
   }
 
   dispose() {

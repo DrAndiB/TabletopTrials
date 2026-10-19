@@ -374,7 +374,9 @@ game.onEventEnd = ({ def, results }) => {
     best.record = res === 'beat' || (res === 'first' && best.place < 3);
   }
   run.last = { def, rows };
-  setTimeout(showResults, (def.resultsDelay ?? 1.6) * 1000);
+  // the medal ceremony in the room, then the results
+  const medallists = rows.filter((r) => r.medal).slice(0, 3).map((r, k) => ({ c: run.competitors[r.i], place: r.place, medal: r.medal, slot: k }));
+  setTimeout(() => game.ceremony(medallists).then(showResults), (def.resultsDelay ?? 1.6) * 1000);
 };
 
 function coin(medal, cls = '') {
@@ -591,6 +593,7 @@ function frame(now) {
       new Promise((r) => setTimeout(r, 1500)),
     ]);
   } catch (e) { /* fonts optional */ }
+  if (params.get('test') && !params.get('cine')) game.cinematics = false;
   if (params.get('autostart')) {
     // tests and quick checks: ?autostart=1&event=sprint&p=keys,cpu,cpu,cpu&mode=single
     if (params.get('p')) params.get('p').split(',').forEach((t, i) => { settings.teams[i].type = TYPES.includes(t) ? t : 'cpu'; });

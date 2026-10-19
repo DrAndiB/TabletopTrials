@@ -24,9 +24,9 @@ const RUNS = 2;
 const SPIN_PTS = { 0: 0, 1: 4, 2: 9, 3: 15, 4: 22, 5: 30, 6: 40 };   // by half turns
 // computer riders: pump quality, share of the possible spin they go for, grab chance, mistake chance
 const BOT = {
-  easy: { pump: [0.35, 0.25], spin: 0.25, grab: 0.1, land: 0.25 },
-  normal: { pump: [0.5, 0.2], spin: 0.4, grab: 0.25, land: 0.15 },
-  hard: { pump: [0.78, 0.12], spin: 0.7, grab: 0.5, land: 0.08 },
+  easy: { pump: [0.45, 0.22], spin: 0.4, grab: 0.15, land: 0.22 },
+  normal: { pump: [0.62, 0.18], spin: 0.62, grab: 0.35, land: 0.13 },
+  hard: { pump: [0.85, 0.1], spin: 0.9, grab: 0.6, land: 0.07 },
 };
 
 // the U: position (z, y) and wall angle at a distance q along the surface from the middle (+q = right)
@@ -478,7 +478,7 @@ class Halfpipe {
       fig.setPose({ ...POSES.stand(tt), hipL: 0.2, hipR: 0.2, kneeL: 0.4, kneeR: 0.4, abL: 0.5, abR: 0.5 });
       return;
     }
-    let y, z, tilt, spinA = 0, pose;
+    let y, z, tilt, spinA = 0, cork = 0, pose;
     const crouch = { ...REST, y: -0.4, lean: 0.25, hipL: 0.55, hipR: 0.55, kneeL: 0.9, kneeR: 0.9, abL: 0.6, abR: 0.6, shL: 0.3, shR: 0.3, elL: 0.3, elR: 0.3, head: -0.1, spL: 0.25, spR: 0.25 };
     if (s.air) {
       // straight up out of the pipe and back down the same wall: upright in the air for the tricks,
@@ -489,6 +489,10 @@ class Halfpipe {
       const k = Math.min(1, Math.min(u, 1 - u) / 0.1), up = k * k * (3 - 2 * k);
       tilt = -a.side * (Math.PI / 2) * (1 - up);
       spinA = (a.spinDir || 1) * a.spun * TAU;
+      // a corked spin: the rider tips over sideways while turning (seen face-on from down the pipe, it
+      // rolls across the screen) and comes back upright as each half turn finishes
+      const frac = a.spun % 0.5 / 0.5;
+      cork = a.spun > 0.02 ? (a.spinDir || 1) * 1.05 * Math.sin(Math.PI * frac) : 0;
       const grab = a.grabbing ? 1 : 0;
       s.grabK = damp(s.grabK ?? 0, grab, 16, dt);
       pose = blendPose(crouch, { ...REST, y: -1.4, lean: 0.6, hipL: 1.6, hipR: 1.6, kneeL: 2.1, kneeR: 2.1, shR: 1.4, elR: 0.2, abR: 0.1, shL: -0.3, abL: 0.9, elL: 0.2, head: 0.1, spL: 0.3, spR: 0.3 }, s.grabK);
@@ -502,7 +506,7 @@ class Halfpipe {
       if (!paused && s.v > 12 && Math.random() < 0.4) this.particles.emit(s.x, y, z, { vx: 0, spread: 3, up: 2, color: 0xffffff, size: 0.55, life: 0.35, alpha: 0.6, grav: 10, n: 1 });
     }
     rd.rig.position.set(s.x, y, z);
-    rd.rig.rotation.set(tilt, 0, 0);
+    rd.rig.rotation.set(tilt, 0, cork, 'XYZ');
     // face down the pipe, turned a little towards where you're riding
     const face = s.air ? 0 : -s.dir * 0.35;
     rd.spin.rotation.set(0, face + spinA, 0);
@@ -567,6 +571,18 @@ class Halfpipe {
     R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: Math.max(180, c.width * 1.6) });
     R.setFocus(0.5, 0.36, 0.7);
   }
+
+  // ---------------------------------------------------------------- cinematics
+  get room() { return 'The garage, on a winter evening'; }
+  flyIn() {
+    return [
+      { x: 110, y: 110, z: -60, yaw: 0, pitch: 0.04, width: 180 },
+      { x: -30, y: 28, z: -70, yaw: -0.5, pitch: 0.1, width: 100 },
+      { x: X0 + 30, y: H, z: 0, yaw: Math.PI / 2, pitch: 0.28, width: 90 },
+    ];
+  }
+  // on the workbench, paint tins for a podium, the pegboard behind
+  ceremonySpot() { return { x: 110, y: 52, z: -136, style: 'tins', gear: 'helmet', yaw: 0, pitch: 0.12, width: 50 }; }
 
   dispose() {
     for (const r of this.riders) r.fig.dispose();

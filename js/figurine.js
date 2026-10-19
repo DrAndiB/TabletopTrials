@@ -178,6 +178,7 @@ export class Figurine {
     this.curlR = Array.from({ length: 9 }, () => r());
 
     this.root = new THREE.Group();   // placed by the event (feet reference, facing)
+    this.root.userData.fig = true;
     this.body = new THREE.Group();   // grounding offset and whole-body pitch
     this.root.add(this.body);
     // skeleton

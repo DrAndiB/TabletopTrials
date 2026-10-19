@@ -492,6 +492,7 @@ class Biathlon {
       sk.off = damp(sk.off, rangeOffset(sk.s), 8, dt);
       if (sk.s >= m.s - 0.05) {
         sk.state = 'shoot'; sk.v = 0; sk.shootT = 0;
+        if (sk.c.human && !sk.little) ctx.hud.flash(sk.hr > 0.68 ? `${sk.c.short}: heart racing! wait a moment for a steadier sight` : `${sk.c.short}: nice and calm: shoot!`, sk.hr > 0.68 ? '#ff8a65' : '#7be495');
         // the sight comes up somewhere off the caps and keeps drifting
         sk.aim = { x: 0, y: 0, t: this.r() * 10, nudge: (this.r() < 0.5 ? -1 : 1) * (1.1 + this.r() * 0.9), drift: 0 };
         sk.aim.t0 = sk.aim.t;
@@ -502,7 +503,7 @@ class Biathlon {
       sk.shootT += dt;
       sk.hr = clamp(sk.hr + (0.28 - sk.hr) * 0.22 * dt, 0.2, 1);
       // a smaller player's sight sways less; a Little player's sight comes back to the cap by itself
-      const sz = sizeOf(sk.c), A = (0.2 + 1.05 * sk.hr * sk.hr) / (1 + (sz.win - 1) * 0.4);
+      const sz = sizeOf(sk.c), A = (0.25 + 1.9 * sk.hr * sk.hr) / (1 + (sz.win - 1) * 0.4);
       const a = sk.aim;
       a.t += dt;
       const steer = sk.bot || sk.little ? 0 : (held.right ? 1 : 0) - (held.left ? 1 : 0);
@@ -542,7 +543,7 @@ class Biathlon {
     const ctx = this.ctx;
     const k = sk.visitShots.length;
     const a = sk.aim;
-    const hit = forced != null ? forced : Math.hypot(a.x, a.y) < 0.62 * (1 + (sizeOf(sk.c).win - 1) * 0.25);
+    const hit = forced != null ? forced : Math.hypot(a.x, a.y) < 0.5 * (1 + (sizeOf(sk.c).win - 1) * 0.35);
     sk.visitShots.push(hit); sk.shots.push(hit);
     ctx.sound.pop();
     const t = this.targets[sk.mat][k];
@@ -742,6 +743,18 @@ class Biathlon {
     R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: Math.max(220, c.width * 1.6) });
     R.setFocus(0.5, 0.42, 0.6);
   }
+
+  // ---------------------------------------------------------------- cinematics
+  get room() { return 'By the fire, on a winter evening'; }
+  flyIn() {
+    return [
+      { x: 30, y: 62, z: -120, yaw: 0, pitch: 0.04, width: 140 },
+      { x: -170, y: 110, z: -120, yaw: 0.25, pitch: 0.05, width: 130 },
+      { x: 0, y: 10, z: 0, yaw: 0, pitch: 0.7, width: 520 },
+    ];
+  }
+  // on a stack of bricks in front of the penguins, the fire behind
+  ceremonySpot() { return { x: 40, y: 0, z: -100, style: 'bricks', gear: 'ski', yaw: 0.1, pitch: 0.2, width: 60 }; }
 
   dispose() {
     for (const s of this.skiers) s.fig.dispose();

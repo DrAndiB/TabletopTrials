@@ -6,6 +6,7 @@ import { Pad } from './input.js';
 import { CPU_SKILL } from './verbs.js';
 import { rng } from './util.js';
 import { flagURL } from './flags.js';
+import { FlyIn, Ceremony } from './director.js';
 
 const STEP = 1 / 120;
 
@@ -19,6 +20,7 @@ export class Game {
     this.paused = false;
     this.clockOffset = 0;    // real seconds minus game seconds, for human press timestamps
     this.onEventEnd = null;  // fn({def, results, competitors})
+    this.cinematics = true;  // fly-ins and medal ceremonies (tests turn them off)
   }
 
   // competitors: [{ slot, type: 'keys'|'touch'|'cpu', code, name, paint, seed, number }]
@@ -77,11 +79,61 @@ export class Game {
     };
   }
 
-  start() {
+  // the fly-in through the room first (skippable), then the event itself
+  start({ flyIn = this.cinematics } = {}) {
+    const keys = flyIn && this.ev.flyIn ? this.ev.flyIn() : null;
+    if (keys && keys.length > 1) {
+      this.state = 'flyin';
+      this.director = new FlyIn(keys, { dur: this.ev.flyInTime ?? 6.5 });
+      this.hud.visible(false);
+      this.caption(this.def.name, this.ev.room || this.def.venue);
+      this.skipWatch();
+      return;
+    }
+    this.begin();
+  }
+
+  begin() {
+    this.director = null;
+    this.caption(null);
     for (const c of this.competitors) c.pad.clear();
     this.hud.setup(this.competitors);
     this.state = 'running';
     this.ev.start();
+  }
+
+  // a human tapping action skips the fly-in or the ceremony (read from the held state, so the event
+  // can keep draining presses as it likes)
+  skipWatch() { this.skipPrev = this.competitors.map((c) => !!c.pad.held.action); }
+  skipPressed() {
+    let hit = false;
+    this.competitors.forEach((c, i) => { const h = !!c.pad.held.action; if (c.human && h && !this.skipPrev[i]) hit = true; this.skipPrev[i] = h; });
+    return hit;
+  }
+
+  // the big title over the fly-in and the ceremony; null removes it
+  caption(title, sub = '', hint = true, small = false) {
+    let el = document.getElementById('cine-cap');
+    if (!title) { if (el) el.classList.remove('show'); return; }
+    if (!el) { el = document.createElement('div'); el.id = 'cine-cap'; document.body.appendChild(el); }
+    const human = this.competitors.some((c) => c.human), touch = this.competitors.some((c) => c.type === 'touch');
+    el.innerHTML = `<b>${title}</b>${sub ? `<span>${sub}</span>` : ''}${hint && human ? `<i>${touch ? 'tap ●' : 'action'} to skip</i>` : ''}`;
+    el.classList.toggle('small', small);
+    el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+  }
+
+  // the medal ceremony at the event's best spot; resolves when it's over (or skipped)
+  ceremony(medallists) {
+    const spot = this.cinematics && this.ev && this.ev.ceremonySpot ? this.ev.ceremonySpot() : null;
+    if (!spot || !medallists.length) return Promise.resolve();
+    this.hud.visible(false);
+    const cer = new Ceremony(this.kit, this.R, spot, medallists);
+    this.director = cer;
+    const names = medallists.slice().sort((a, b) => a.place - b.place).map((m) => `${['🥇', '🥈', '🥉'][m.place]} ${m.c.name}`).join('   ');
+    this.caption(`${this.def.name}: the medals`, names, true, true);
+    this.skipWatch();
+    this.sound.cheer?.(1); this.sound.clap?.(10);
+    return new Promise((resolve) => { this.ceremonyEnd = () => { this.ceremonyEnd = null; this.caption(null); resolve(); }; this.ceremonyT = 0; });
   }
 
   pause(on) {
@@ -94,6 +146,17 @@ export class Game {
   // dt: real seconds since the last rendered frame
   update(dt) {
     if (!this.ev) return;
+    if (this.state === 'flyin') {
+      // the room animates (on its own clock), nothing is played yet
+      this.time += dt;
+      if (this.skipPressed() || this.director.done) this.begin();
+      this.frame(dt);
+      return;
+    }
+    if (this.ceremonyEnd) {
+      this.ceremonyT += dt;
+      if ((this.ceremonyT > 1 && this.skipPressed()) || this.ceremonyT > 7.5) this.ceremonyEnd();
+    }
     if (!this.paused) {
       this.acc += dt;
       let n = 0;
@@ -108,6 +171,7 @@ export class Game {
   frame(dt) {
     if (!this.ev) return;
     this.ev.frame(dt, this.paused);
+    if (this.director) this.director.apply(this.R, this.paused ? 0 : dt);
     this.R.render();
   }
 
@@ -121,6 +185,9 @@ export class Game {
 
   unload() {
     this.speed = 1;
+    this.director = null;
+    this.caption(null);
+    if (this.ceremonyEnd) this.ceremonyEnd();
     if (this.ev) { this.ev.dispose?.(); this.ev = null; }
     if (this.kit) { this.kit.dispose(); this.kit = null; }
     this.hud.eventEl.innerHTML = '';

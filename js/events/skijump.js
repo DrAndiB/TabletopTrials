@@ -10,6 +10,7 @@ import * as P from './skijump-physics.js';
 import { Particles } from '../fx.js';
 import { winFor, helped } from '../sizes.js';
 import { clamp, damp, rng, makeNoise2D } from '../util.js';
+import { hudKit, Skipper } from './common.js';
 import { paneWindow, snowSky, FairyLights, snowCrowd, ChristmasTree } from '../venues.js';
 
 const HILL_Z = 22;            // the hill is 44 wide (z from -22 to 22)
@@ -557,18 +558,17 @@ class SkiJump {
 
   // a sign that pops up next to the jumper when a gust is coming: which way to lean, and the wind
   buildGustSign(K) {
+    // the sign says what to do, nothing else: an arrow the way to lean and the words under it
     const draw = (dir) => {
       const c = K.TX.makeCanvas(256), g = c.getContext('2d');
       g.fillStyle = '#ffc93c'; g.strokeStyle = '#1f1a17'; g.lineWidth = 10;
       g.beginPath(); g.arc(128, 128, 112, 0, Math.PI * 2); g.fill(); g.stroke();
-      g.save(); g.translate(128, 128); g.scale(dir, 1);
-      // the arrow: which way to lean (left = back, right = forward)
+      g.save(); g.translate(128, 104); g.scale(dir, 1);
       g.fillStyle = '#1f1a17';
-      g.beginPath(); g.moveTo(-78, 0); g.lineTo(-18, -54); g.lineTo(-18, -22); g.lineTo(40, -22); g.lineTo(40, 22); g.lineTo(-18, 22); g.lineTo(-18, 54); g.closePath(); g.fill();
-      // the wind, coming from the other side
-      g.strokeStyle = '#ffffff'; g.lineWidth = 9; g.lineCap = 'round';
-      for (const [y, l] of [[-40, 34], [0, 44], [40, 34]]) { g.beginPath(); g.moveTo(96, y); g.lineTo(96 - l * 0.4, y); g.stroke(); }
+      g.beginPath(); g.moveTo(-80, 0); g.lineTo(-22, -50); g.lineTo(-22, -20); g.lineTo(62, -20); g.lineTo(62, 20); g.lineTo(-22, 20); g.lineTo(-22, 50); g.closePath(); g.fill();
       g.restore();
+      g.fillStyle = '#1f1a17'; g.font = '44px "Lilita One", Impact, sans-serif'; g.textAlign = 'center';
+      g.fillText(dir > 0 ? 'LEAN BACK' : 'LEAN FWD', 128, 200);
       return K.TX.toTexture(c, { wrap: false });
     };
     this.gustTex = { back: draw(1), fwd: draw(-1) };
@@ -580,6 +580,8 @@ class SkiJump {
 
   buildHud() {
     const el = this.ctx.hud.el;
+    // watching a computer jumper: action fast-forwards
+    this.skipper = new Skipper(this.ctx, hudKit(this.ctx));
     const style = document.createElement('style');
     style.textContent = `.sj-card{position:absolute;left:12px;top:12px;width:min(250px,40vw);background:rgba(255,244,220,.95);border:3px solid #1f1a17;border-radius:14px;box-shadow:0 3px 0 #1f1a17;padding:8px 10px;font:700 12px/1.25 Rubik,sans-serif;color:#1f1a17}
       .sj-card .who{display:flex;align-items:center;gap:7px;font:400 18px/1.1 "Lilita One",Impact,sans-serif}.sj-card .who img{height:20px;width:30px;object-fit:cover;border:2px solid #1f1a17;border-radius:3px}
@@ -742,6 +744,7 @@ class SkiJump {
       if (j && i === j.i) q = e;
       if (this.jumpers[i].c.human && e.some((x) => x.b === 'action' && x.down)) skip = true;
     }
+    this.skipper.update(!!(j && j.bot), skip);
     if (!j) return;
     const held = ctx.held(j.i);
     // Little jumpers: any button is the tap, and the balance and the landing look after themselves;
@@ -910,7 +913,7 @@ class SkiJump {
     const who = this.hudCard.querySelector('.who'), rd = this.hudCard.querySelector('.rd'), ol = this.hudCard.querySelector('ol');
     if (j) {
       who.innerHTML = `<img src="${j.c.flag}" alt=""><span>${j.c.short}</span>`;
-      rd.textContent = `Round ${this.round} · jumper ${this.turn + 1} of ${this.order.length}`;
+      rd.textContent = `Round ${this.round} · jumper ${this.turn + 1} of ${this.order.length}` + (j.bot && this.ctx.competitors.some((c) => c.human) ? ' · action: fast-forward' : '');
     }
     const ranked = [...this.jumpers].filter((x) => x.jumps.length).sort((a, b) => b.total - a.total);
     ol.innerHTML = ranked.map((x, k) => `<li class="${x === j ? 'me' : ''}"><span>${ORD[k]}</span><img src="${x.c.flag}" alt=""><span>${x.c.short}</span><b>${x.total.toFixed(1)}</b></li>`).join('');
@@ -1080,6 +1083,19 @@ class SkiJump {
     R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: Math.max(170, c.width * 1.8) });
     R.setFocus(0.5, 0.26, 0.85);
   }
+
+  // ---------------------------------------------------------------- cinematics
+  get room() { return 'The living room in December'; }
+  flyIn() {
+    const p = P.inrunAt(P.START_S);
+    return [
+      { x: 262, y: 72, z: -40, yaw: -0.2, pitch: 0.08, width: 130 },
+      { x: 70, y: 112, z: -60, yaw: 0, pitch: 0.04, width: 200 },
+      { x: p.x + 14, y: p.y - 2, z: 0, yaw: 0.25, pitch: 0.2, width: 90 },
+    ];
+  }
+  // in front of the Christmas tree, on a stack of presents
+  ceremonySpot() { return { x: 262, y: 0, z: -46, style: 'gifts', gear: 'ski', yaw: 0.15, pitch: 0.13, width: 56 }; }
 
   dispose() {
     for (const j of this.jumpers) j.fig.dispose();

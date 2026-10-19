@@ -370,10 +370,11 @@ class PoleVault {
     const a = this.va, v = this.cur, ctx = this.ctx;
     a.relU = Math.min(1, a.u);
     a.pushQ = clamp(1 - Math.abs(a.relU - PUSH_U) / winFor(v.c, PUSH_W), 0, 1);
-    if (v.c.human) a.note = { text: a.pushQ > 0.75 ? 'great push!' : a.relU < PUSH_U ? 'let go early' : 'let go late', col: a.pushQ > 0.75 ? '#7be495' : a.pushQ > 0.35 ? '#ffc93c' : '#ff8a65', t: 0 };
+    if (v.c.human) a.note = { text: `${a.pushQ > 0.75 ? 'great push!' : a.relU < PUSH_U ? 'let go early' : 'let go late'} +${Math.round(80 * a.pushQ)} cm`, col: a.pushQ > 0.75 ? '#7be495' : a.pushQ > 0.35 ? '#ffc93c' : '#ff8a65', t: 0 };
     // how high the body goes: speed into the straw, the plant, the push
     const e = (a.speed / VMAX) ** 2;
-    a.height = Math.round((1.9 + 3.95 * e * (0.55 + 0.45 * a.plantQ) + 0.45 * a.pushQ) * 100) / 100;
+    // the run-up speed counts most, then where the straw went in, then the push off its top (worth 80 cm)
+    a.height = Math.round((1.9 + 3.6 * e * (0.55 + 0.45 * a.plantQ) + 0.8 * a.pushQ) * 100) / 100;
     a.clear = a.height >= this.bar + 0.02;
     const top = this.handsAt(a.relU);
     a.p0 = this.swingPitch(a.relU);
@@ -601,7 +602,7 @@ class PoleVault {
       const arcPt = (k) => `${(-Math.cos(Math.PI * k) * 40).toFixed(1)} ${(-Math.sin(Math.PI * k) * 40).toFixed(1)}`;
       const inZone = a.u >= PUSH_U - pw && a.u <= PUSH_U + pw;
       const nd = arcPt(u);
-      const svg = `<svg width="104" height="60" viewBox="-52 -50 104 60"><path d="M-40 0 A40 40 0 0 1 40 0" fill="none" stroke="#fff1d6" stroke-width="12"/><path d="M${arcPt(lo)} A40 40 0 0 1 ${arcPt(hi)}" fill="none" stroke="#2fae5a" stroke-width="12"/><path d="M-40 0 A40 40 0 0 1 40 0" fill="none" stroke="#1f1a17" stroke-width="2.5" transform="scale(1.16)"/><line x1="0" y1="0" x2="${nd.split(' ')[0]}" y2="${nd.split(' ')[1]}" stroke="#1f1a17" stroke-width="5" stroke-linecap="round"/><circle r="5" fill="#1f1a17"/></svg>`;
+      const svg = `<svg width="168" height="97" viewBox="-52 -50 104 60"><path d="M-40 0 A40 40 0 0 1 40 0" fill="none" stroke="#fff1d6" stroke-width="12"/><path d="M${arcPt(lo)} A40 40 0 0 1 ${arcPt(hi)}" fill="none" stroke="#2fae5a" stroke-width="12"/><path d="M-40 0 A40 40 0 0 1 40 0" fill="none" stroke="#1f1a17" stroke-width="2.5" transform="scale(1.16)"/><line x1="0" y1="0" x2="${nd.split(' ')[0]}" y2="${nd.split(' ')[1]}" stroke="#1f1a17" stroke-width="5" stroke-linecap="round"/><circle r="5" fill="#1f1a17"/></svg>`;
       this.tags.set('pv', `${note}${svg}<br><span class="pill big" style="--tc:${inZone ? '#7be495' : '#fff1d6'}">${inZone ? (v.little ? 'tap now!' : 'let go!') : a.u < PUSH_U ? (v.little ? 'wait…' : 'hold…') : 'too late!'}</span>`);
       const hd = this.handsAt(a.u);
       this.tags.place('pv', hd.x - 14, hd.y + 2, 0, 'center');
@@ -616,7 +617,7 @@ class PoleVault {
       this.tags.place('pv', a.x, 13, 0);
       if (near) {
         const rr = 14 + Math.min(40, Math.abs(d) * 1.4);
-        this.tags.set('pvr', `<svg width="120" height="120" viewBox="-60 -60 120 120"><circle r="14" fill="rgba(123,228,149,.35)" stroke="#2fae5a" stroke-width="4"/><circle r="${rr.toFixed(1)}" fill="none" stroke="${good ? '#2fae5a' : '#1f1a17'}" stroke-width="4"/></svg>`);
+        this.tags.set('pvr', `<svg width="180" height="180" viewBox="-60 -60 120 120"><circle r="14" fill="rgba(123,228,149,.35)" stroke="#2fae5a" stroke-width="4"/><circle r="${rr.toFixed(1)}" fill="none" stroke="${good ? '#2fae5a' : '#1f1a17'}" stroke-width="4"/></svg>`);
         this.tags.place('pvr', a.x, 0.5, 0, 'center');
       } else this.tags.hide('pvr');
       return;
@@ -634,6 +635,18 @@ class PoleVault {
     R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: Math.max(150, c.width * 1.8) });
     R.setFocus(0.5, 0.28, 0.85);
   }
+
+  // ---------------------------------------------------------------- cinematics
+  get room() { return 'The playroom'; }
+  flyIn() {
+    return [
+      { x: 30, y: 122, z: -60, yaw: 0, pitch: 0.04, width: 170 },
+      { x: 130, y: 40, z: -50, yaw: -0.45, pitch: 0.14, width: 150 },
+      { x: -40, y: 10, z: 0, yaw: 0.3, pitch: 0.25, width: 130 },
+    ];
+  }
+  // on top of the landing pillow, the rainbow behind
+  ceremonySpot() { return { x: BAR_X + 16, y: 8, z: 0, style: 'blocks', gear: 'sprint', yaw: 0.3, pitch: 0.3, width: 40 }; }
 
   dispose() {
     for (const v of this.vaulters) v.fig.dispose();
