@@ -9,6 +9,7 @@ import { clamp } from '../util.js';
 import { Rhythm } from '../verbs.js';
 import { winFor, helped } from '../sizes.js';
 
+const LANE_W = 11;
 const HURDLES = Array.from({ length: 10 }, (_, k) => 39 + k * 25.5);
 const DOM_H = 4.8;            // a domino standing on end
 const PENCIL_R = 0.38;
@@ -94,6 +95,17 @@ class Hurdles extends Sprint {
     // chalk take-off marks
     const mg = new THREE.PlaneGeometry(0.5, 6).rotateX(-Math.PI / 2);
     K.instances(mg, new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, roughness: 1, polygonOffset: true, polygonOffsetFactor: -2 }), marks, { cast: false });
+    // phone: a green take-off strip in the player's lane, where a jump clears the pencil cleanly
+    const pr = this.runners.find((ru) => ru.ph);
+    if (pr) {
+      const v = VMAX_H * 0.96, a = v * JUMP_T * CLEAN[1], b = v * JUMP_T * CLEAN[0];
+      this.cueLen = a - b; this.cueOff = (a + b) / 2;
+      this.cue = new THREE.Mesh(new THREE.PlaneGeometry(a - b, LANE_W - 1.5).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x4be07f, transparent: true, opacity: 0.6, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 }));
+      this.cue.position.set(HURDLES[0] - this.cueOff, 0.07, pr.z);
+      this.cue.renderOrder = 2;
+      g.add(this.cue);
+      this.cueFor = pr;
+    }
   }
 
   placePencil(p, i) {
@@ -105,6 +117,18 @@ class Hurdles extends Sprint {
     this.v3.set(p.x + p.dx * t, y, p.z);
     this.m4.compose(this.v3, this.q, this.one);
     this.pencilMesh.setMatrixAt(i, this.m4);
+  }
+
+  // Phone mode: the legs run by themselves; the one trick is the jump, a tap as the feet cross the
+  // green strip in front of each hurdle.
+  // The better the jumps sit over the pencils, the better the stride between them (jq, 0..1).
+  fitPhone(ru) { ru.jq = 0.5; ru.autoEff = 0.89 + 0.08 * ru.jq; }
+  phoneScheme() { return 'tap'; }
+  phoneHint(ru) {
+    const P = this.phase;
+    if (P === 'walk' || P === 'marks' || P === 'set' || P === 'false') return ['wait', 'Wait for the whistle'];
+    if ((P === 'race' || P === 'finishing') && !ru.finished) return !ru.started ? ['tap', 'Tap to go!', 'go'] : ['tap', 'Tap on the green: jump'];
+    return [''];
   }
 
   knock(ru, hx, hard) {
@@ -123,6 +147,7 @@ class Hurdles extends Sprint {
   onAction(ru, t, auto = false) {
     if (ru.air || ru.downT > 0) return;
     ru.air = true; ru.jumpT0 = t; ru.crossed = false;
+    if (ru.ph) this.ctx.buzz('tap');
     if (!auto) ru.rhythm.press('action', t);
     if (ru.c.human) this.ctx.sound.whoosh(0.35);
   }
@@ -145,10 +170,15 @@ class Hurdles extends Sprint {
     if (ru.air) ru.crossed = true;
     // smaller players have a wider window over the pencil
     const cw = Math.min(0.49, winFor(ru.c, (CLEAN[1] - CLEAN[0]) / 2)), kw = Math.max(cw, winFor(ru.c, (CLIP[1] - CLIP[0]) / 2));
-    if (u >= 0.5 - cw && u <= 0.5 + cw) return;
+    if (u >= 0.5 - cw && u <= 0.5 + cw) {
+      if (ru.ph) { ru.jq += (clamp(1.25 - Math.abs(u - 0.5) / cw, 0, 1) - ru.jq) * 0.5; ru.autoEff = 0.89 + 0.08 * ru.jq; }
+      return;
+    }
+    if (ru.ph) { ru.jq *= 0.4; ru.autoEff = 0.89 + 0.08 * ru.jq; }
     if (u >= 0.5 - kw && u <= 0.5 + kw) {
       // clipped the pencil: it falls, you lose a little speed
       ru.v *= 0.84; ru.stumbleT = 0.3; ru.clips++;
+      if (ru.ph) ctx.buzz('thump');
       this.knock(ru, hx, false);
       if (ru.c.human) ctx.hud.flash(`${ru.c.short}: clip!`, '#ffc93c');
       return;
@@ -156,6 +186,7 @@ class Hurdles extends Sprint {
     // straight into it: down you go
     this.knock(ru, hx, true);
     ru.falls++;
+    if (ru.ph) ctx.buzz('bad');
     ru.v = 0; ru.downT = 1.0; ru.air = false; ru.y = 0; ru.jumpU = 0; ru.x = hx + 1;
     ctx.sound.thump?.(0.7); ctx.sound.stumble(this.pan(ru.x));
     if (ru.c.human) ctx.hud.flash(`${ru.c.short}: oops!`, '#ff8a65');
@@ -215,6 +246,15 @@ class Hurdles extends Sprint {
       const k = hx == null || !ru.started ? -1 : Math.floor(clamp((ru.x - (prev - MARK) ) / ((hx - prev) / 5), 0, 4.999));
       m.beat.forEach((d, i) => d.classList.toggle('on', i === k));
     }
+    if (this.cue) {
+      const ru = this.cueFor, hx = HURDLES[ru.next];
+      this.cue.visible = hx != null && !ru.finished && (this.phase === 'race' || this.phase === 'finishing' || this.phase === 'set' || this.phase === 'marks');
+      if (hx != null) {
+        this.cue.position.x = hx - this.cueOff;
+        const inside = Math.abs(ru.x - this.cue.position.x) <= this.cueLen / 2;
+        this.cue.material.opacity = inside ? 0.95 : 0.45 + 0.15 * Math.sin(this.ctx.time() * 9);
+      }
+    }
     if (!this.pencilMesh || paused) return;
     let any = false;
     this.pencils.forEach((p, i) => { if (p.t >= 0 && p.t < 1) { p.t = Math.min(1, p.t + dt / 0.38); this.placePencil(p, i); any = true; } });
@@ -231,6 +271,11 @@ export default {
     { verb: 'Timing', text: 'In the blocks, hold <b>action</b> and let go on the <b>whistle</b>.' },
     { verb: 'Rhythm', text: 'Tap <b>left</b> or <b>right</b> on a steady beat to run: no need to swap, no need to rush.' },
     { verb: 'Timing', text: 'Tap <b>action</b> to jump at the <b>chalk mark</b>. Keep the beat and it goes tap, tap, tap, tap, <b>jump</b> for every hurdle. Clip a pencil and you slow down; run into one and down you go.' },
+  ],
+  // phone mode (one touch player, gestures): the whole how-to
+  phoneHow: [
+    { g: 'tap', text: 'Tap at the whistle to go: the legs run by themselves.' },
+    { g: 'tap', text: 'Tap as your feet cross the <b>green strip</b> to jump each hurdle.' },
   ],
   helpers: {
     little: 'You start and <b>jump by yourself</b>. Just tap <b>any button</b> on a slow, steady beat.',

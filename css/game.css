@@ -282,6 +282,76 @@ body:not([data-screen="none"]) #touch { display: none; }
 #touch[data-n="1"] .tb-action { width: 96px; height: 96px; border-radius: 50%; justify-self: center; }
 .tb.down { background: rgba(255,201,60,.65); }
 
+/* phone mode: the whole screen takes the gestures (under the HUD, which lets touches through) */
+#gest { position: fixed; inset: 0; z-index: 4; display: none; touch-action: none; -webkit-tap-highlight-color: transparent; }
+body[data-screen="none"] #gest.show { display: block; }
+/* the hint pill: a little animated finger and two or three words */
+.ph-hint { position: absolute; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); transform: translate(-50%, 8px); display: flex; align-items: center; gap: 10px; background: rgba(31,26,23,.82); color: #fff6dc; border: 3px solid #fff6dc; border-radius: 999px; padding: 5px 16px 5px 7px; font: 800 17px/1 var(--body); letter-spacing: .02em; white-space: nowrap; opacity: 0; transition: opacity .18s, transform .18s; box-shadow: 0 3px 0 rgba(0,0,0,.35); }
+.ph-hint.on { opacity: 1; transform: translate(-50%, 0); }
+.ph-hint[data-tone="go"] { background: rgba(33,125,66,.92); }
+.ph-hint[data-tone="warn"] { background: rgba(190,60,40,.92); }
+.ph-hint b:empty { display: none; }
+.ph-g { position: relative; width: 46px; height: 34px; flex: none; border-radius: 999px; background: rgba(255,246,220,.14); }
+.ph-g i { position: absolute; left: 50%; top: 50%; width: 15px; height: 15px; margin: -7.5px 0 0 -7.5px; border-radius: 50%; background: #ffc93c; box-shadow: 0 0 0 2px #1f1a17; }
+.ph-g i + i { display: none; }
+.g-tap i { animation: g-tap .7s ease-in-out infinite; }
+.g-tap2 i, .g-swipe2 i { display: block; left: 30%; }
+.g-tap2 i + i, .g-swipe2 i + i { display: block; left: 70%; animation-delay: -.24s; }
+.g-tap2 i { animation: g-tap .48s ease-in-out infinite; }
+.g-swipe2 i { animation: g-swipe 1s ease-in-out infinite; }
+.g-swipe2 i + i { animation-delay: -.5s; }
+.g-hold i { animation: g-hold 1.4s ease-in-out infinite; }
+.g-release i { animation: g-release .9s ease-out infinite; }
+.g-rub i { animation: g-rub .36s ease-in-out infinite alternate; }
+.g-slide i { animation: g-slide 1.3s ease-in-out infinite alternate; }
+.g-slidev i { animation: g-slidev 1.3s ease-in-out infinite alternate; }
+.g-pull i { animation: g-pull 1.3s ease-in-out infinite; }
+.g-drag i { animation: g-drag 1.6s linear infinite; }
+.g-up i { animation: g-up .8s ease-out infinite; }
+.g-wait i { background: #fff6dc; opacity: .5; }
+@keyframes g-tap { 0%, 100% { transform: scale(1); } 45% { transform: scale(.55); } }
+@keyframes g-swipe { 0% { transform: translateY(-9px); opacity: 0; } 20% { opacity: 1; } 60% { transform: translateY(9px); opacity: 1; } 75%, 100% { transform: translateY(9px); opacity: 0; } }
+@keyframes g-hold { 0% { transform: scale(1); box-shadow: 0 0 0 2px #1f1a17; } 20%, 80% { transform: scale(.6); box-shadow: 0 0 0 2px #1f1a17, 0 0 0 8px rgba(255,201,60,.45); } 100% { transform: scale(1); } }
+@keyframes g-release { 0% { transform: scale(.55); box-shadow: 0 0 0 2px #1f1a17, 0 0 0 3px rgba(255,201,60,.9); } 100% { transform: scale(1); box-shadow: 0 0 0 2px #1f1a17, 0 0 0 14px rgba(255,201,60,0); } }
+@keyframes g-rub { from { transform: translateX(-13px); } to { transform: translateX(13px); } }
+@keyframes g-slide { from { transform: translateX(-13px) scale(.7); } to { transform: translateX(13px) scale(.7); } }
+@keyframes g-slidev { from { transform: translateY(-8px) scale(.7); } to { transform: translateY(8px) scale(.7); } }
+@keyframes g-pull { 0% { transform: translate(8px, -6px) scale(.7); } 60%, 75% { transform: translate(-10px, 7px) scale(.7); } 80% { transform: translate(-10px, 7px) scale(1); opacity: 1; } 100% { transform: translate(12px, -8px) scale(1); opacity: 0; } }
+@keyframes g-drag { 0% { transform: translate(-10px, 4px) scale(.7); } 25% { transform: translate(0, -6px) scale(.7); } 50% { transform: translate(10px, 3px) scale(.7); } 75% { transform: translate(0, 7px) scale(.7); } 100% { transform: translate(-10px, 4px) scale(.7); } }
+@keyframes g-up { 0% { transform: translateY(9px) scale(.7); opacity: 1; } 70%, 100% { transform: translateY(-11px) scale(.7); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .ph-g i { animation: none !important; } }
+/* phone mode HUD: names give way to flags, and nothing sits under the corner buttons */
+body.phone #chips { top: 8px; left: 8px; transform: none; justify-content: flex-start; max-width: calc(100vw - 190px); gap: 4px; }
+body.phone .chip { padding: 1px 8px 1px 2px; border-width: 2px; box-shadow: 0 2px 0 var(--ink); gap: 4px; }
+body.phone .chip img { height: 18px; width: 27px; }
+body.phone .chip-name { display: none; }
+body.phone .chip-info { font-size: 12px; }
+body.phone .chip-info:empty { display: none; }
+body.phone .chip:has(.chip-info:empty) { padding-right: 2px; }
+body.phone #hud:has(.ev-card:not(.ev-hidden)) #chips, body.phone #hud:has(.sj-card) #chips, body.phone #hud:has(.cu-card) #chips, body.phone #hud:has(.jv-card) #chips { display: none; }
+body.phone .msg { font-size: clamp(26px, 8vw, 72px); padding: 0 12px; top: 22%; }
+body.phone .msg.big { font-size: clamp(64px, 20vw, 150px); top: 20%; }
+body.phone .msg.small { font-size: clamp(22px, 6vw, 44px); }
+body.phone #flash { top: 64px; }
+body.phone .flash-item { font-size: clamp(18px, 5.2vw, 26px); }
+body.phone .ev-card, body.phone .sj-card, body.phone .cu-card, body.phone .jv-card { width: min(230px, calc(100vw - 190px)); padding: 5px 8px; top: 8px; left: 8px; }
+body.phone .ev-card .who, body.phone .sj-card .who, body.phone .cu-card .who, body.phone .jv-card .who { font-size: 15px; }
+body.phone .cu-g { width: min(280px, 72vw); padding: 2px 10px 6px; }
+body.phone .cu-g .tip { display: none; }
+body.phone .sj-ph .lab b { display: none; }
+body.phone .ev-g-ph { padding: 2px 10px 6px; width: min(300px, 76vw); }
+body.phone .ev-g-ph:not(:has(.row:not([style*="display: none"]))) { display: none; }
+body.phone .ev-ff-ph { right: 10px; top: 66px; bottom: auto; }
+@media (orientation: portrait) { body.phone #corner .icon-btn { width: 42px; height: 42px; } }
+/* a phone held sideways is short: the hint goes to the bottom left and the meters to the bottom right,
+   so the middle, where the athlete is, stays clear */
+@media (orientation: landscape) and (max-height: 520px) {
+  body.phone .ph-hint { left: max(12px, env(safe-area-inset-left)); transform: translate(0, 8px); font-size: 15px; }
+  body.phone .ph-hint.on { transform: none; }
+  body.phone .ev-g-ph, body.phone .rm.rm-ph, body.phone .jv-g.jv-ph, body.phone .cu-g, body.phone .bi-m.bi-ph, body.phone .sj-ph { left: auto; right: max(12px, env(safe-area-inset-right)); transform: none; bottom: max(14px, env(safe-area-inset-bottom)) !important; width: min(250px, 34vw); }
+  body.phone .bi-m.bi-ph.range { width: min(340px, 46vw); }
+}
+
 /* ---------- performance overlay and GPU hint ---------- */
 #perf { position: fixed; top: 64px; left: 8px; z-index: 80; pointer-events: none; white-space: pre; font: 500 12px/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace; color: #e8ffe8; background: rgba(15, 13, 11, .78); padding: 8px 10px; border-radius: 8px; }
 #gpu-hint { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 60; width: min(560px, calc(100vw - 32px)); display: flex; gap: 14px; align-items: center; background: var(--paper); color: var(--ink); border: var(--line) solid var(--ink); border-radius: 14px; padding: 12px 14px; box-shadow: 0 6px 0 rgba(0, 0, 0, .35); font-size: 14px; }
@@ -299,3 +369,16 @@ body:not([data-screen="none"]) #touch { display: none; }
 #cine-cap.small span { margin-top: 6px; font-size: clamp(14px, 1.7vw, 22px); }
 #cine-cap.small i { margin-top: 8px; }
 #cine-cap i { display: inline-block; margin-top: 12px; font: 800 12px/1 Rubik, sans-serif; font-style: normal; text-transform: uppercase; letter-spacing: .1em; background: rgba(31,26,23,.7); color: #ffc93c; padding: 6px 12px; border-radius: 99px; }
+
+/* options that only make sense with a touch screen, or in the Android app */
+html:not(.can-touch) .touch-only { display: none !important; }
+html:not(.in-app) .app-only { display: none !important; }
+.in-app #btn-fs { display: none; }
+.in-app #corner { right: calc(10px + env(safe-area-inset-right, 0px)); top: calc(10px + env(safe-area-inset-top, 0px)); }
+/* the phone version of an event's how-to: the animated finger and one line */
+.how.how-ph { align-items: center; }
+.how.how-ph .ph-g { background: rgba(31,26,23,.86); }
+.results-record { margin: 8px 0 0; font-size: 13px; font-weight: 700; color: var(--ink-2); text-align: center; }
+.results-record:empty { display: none; }
+/* no keyboard on a phone: the key hints on the buttons go */
+.touch-first .btn kbd, .touch-first .panel-foot .small { display: none; }

@@ -7,13 +7,16 @@ import { CPU_SKILL } from './verbs.js';
 import { rng } from './util.js';
 import { flagURL } from './flags.js';
 import { FlyIn, Ceremony } from './director.js';
+import { buzz } from './haptics.js';
 
 const STEP = 1 / 120;
 const EVENT_MUSIC = 0.45;   // the music during an event, relative to the menus: in the background
 
 export class Game {
-  constructor(R, input, sound, hud) {
+  constructor(R, input, sound, hud, gestures = null) {
     this.R = R; this.input = input; this.sound = sound; this.hud = hud;
+    this.gestures = gestures;   // phone controls (js/gestures.js), attached to the one phone player
+    this.skipCpu = false;       // solo play: computer players' turns run fast-forward by themselves
     this.ev = null; this.def = null; this.kit = null;
     this.state = 'idle';     // idle | ready | running | done | attract
     this.time = 0;
@@ -35,6 +38,9 @@ export class Game {
       pad: c.type === 'cpu' ? new Pad() : this.input.pads[c.slot],
       flag: flagURL(c.code, 72),
     }));
+    const ph = attract ? null : this.competitors.find((c) => c.human && c.phone);
+    this.phonePad = ph ? ph.pad : null;
+    this.gestures?.attach(this.phonePad);
     this.kit = makeKit({ scene: this.R.scene, quality: this.R.quality, seed });
     this.sound.setScene?.(def.id);
     const ctx = this.makeContext({ skill, round, seed, attract });
@@ -53,6 +59,13 @@ export class Game {
       skill: CPU_SKILL[skill] || CPU_SKILL.normal, skillName: skill,
       round, attract, rand: rng(seed * 977 + 5),
       quality: R.quality,
+      // phone mode: the one touch player plays with gestures (null otherwise); see js/gestures.js
+      gest: this.phonePad ? this.gestures : null,
+      phone: !!this.phonePad,
+      solo: this.competitors.filter((c) => c.human).length === 1,
+      get autoSkip() { return game.skipCpu && game.competitors.filter((c) => c.human).length === 1; },
+      // a vibration for the phone player's big moments: 'tick' | 'tap' | 'good' | 'bad' | 'thump' | 'go'
+      buzz: (kind) => { if (game.phonePad && !game.paused) buzz(kind); },
       time: () => game.time,
       // queued presses of competitor i, oldest first, timed on the game clock: [{b, down, t}]
       presses(i) {
@@ -101,6 +114,7 @@ export class Game {
     this.director = null;
     this.caption(null);
     for (const c of this.competitors) c.pad.clear();
+    this.gestures?.scheme('tap');
     this.hud.setup(this.competitors);
     this.state = 'running';
     this.ev.start();
@@ -121,7 +135,7 @@ export class Game {
     if (!title) { if (el) el.classList.remove('show'); return; }
     if (!el) { el = document.createElement('div'); el.id = 'cine-cap'; document.body.appendChild(el); }
     const human = this.competitors.some((c) => c.human), touch = this.competitors.some((c) => c.type === 'touch');
-    el.innerHTML = `<b>${title}</b>${sub ? `<span>${sub}</span>` : ''}${hint && human ? `<i>${touch ? 'tap ●' : 'action'} to skip</i>` : ''}`;
+    el.innerHTML = `<b>${title}</b>${sub ? `<span>${sub}</span>` : ''}${hint && human ? `<i>${this.phonePad ? 'tap' : touch ? 'tap ●' : 'action'} to skip</i>` : ''}`;
     el.classList.toggle('small', small);
     el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
   }
@@ -131,6 +145,7 @@ export class Game {
     const spot = this.cinematics && this.ev && this.ev.ceremonySpot ? this.ev.ceremonySpot() : null;
     if (!spot || !medallists.length) return Promise.resolve();
     this.hud.visible(false);
+    this.gestures?.scheme('tap');
     const cer = new Ceremony(this.kit, this.R, spot, medallists);
     this.director = cer;
     const names = medallists.slice().sort((a, b) => a.place - b.place).map((m) => `${['🥇', '🥈', '🥉'][m.place]} ${m.c.name}`).join('   ');
@@ -189,6 +204,7 @@ export class Game {
 
   unload() {
     this.speed = 1;
+    this.gestures?.attach(null); this.phonePad = null;
     this.director = null;
     this.caption(null);
     if (this.ceremonyEnd) this.ceremonyEnd();

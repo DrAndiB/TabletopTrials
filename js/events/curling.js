@@ -283,7 +283,9 @@ class Curling {
   buildHud() {
     const el = this.ctx.hud.el;
     // watching a computer curler: action fast-forwards
-    this.skipper = new Skipper(this.ctx, hudKit(this.ctx));
+    const hk = hudKit(this.ctx);
+    this.hint = hk.hint;
+    this.skipper = new Skipper(this.ctx, hk);
     const style = document.createElement('style');
     style.textContent = `.cu-card{position:absolute;left:12px;top:12px;width:min(260px,42vw);background:rgba(255,244,220,.95);border:3px solid #1f1a17;border-radius:14px;box-shadow:0 3px 0 #1f1a17;padding:8px 10px;font:700 12px/1.25 Rubik,sans-serif;color:#1f1a17}
       .cu-card .who{display:flex;align-items:center;gap:7px;font:400 18px/1.1 "Lilita One",Impact,sans-serif}.cu-card .who img{height:20px;width:30px;object-fit:cover;border:2px solid #1f1a17;border-radius:3px}
@@ -302,7 +304,7 @@ class Curling {
     this.hudCard = mk('cu-card', '<div class="who"></div><div class="rd"></div><ol></ol>');
     this.hudG = mk('cu-g cu-hidden', '<div class="tip"></div><div class="row pw"><span>Strength</span><div class="bar"><i></i><b title="reaches the middle"></b></div></div><div class="row sw"><span>Sweeping</span><div class="bar"><i></i></div></div>');
     this.ptsEl = mk('cu-layer', '');
-    if (this.ctx.competitors.some((c) => c.type === 'touch')) this.hudG.style.setProperty('--tb', '110px');
+    if (this.ctx.competitors.some((c) => c.type === 'touch')) this.hudG.style.setProperty('--tb', this.ctx.phone ? '58px' : '110px');
   }
 
   // ---------------------------------------------------------------- flow
@@ -342,6 +344,12 @@ class Curling {
     p.fig.setExpression('focus');
     if (p.bot) this.planBot(p);
     this.ctx.competitors.forEach((c, i) => this.ctx.hud.chip(i, `${this.players[i].total} pts`, i === p.i ? 'active' : ''));
+    // Phone mode: one finger does the throw. Drag sideways to aim, pull back for strength (the meter
+    // follows the pull), let go; then rub the glass to sweep.
+    this.ph = !!p.c.phone && !helped(p.c);
+    if (this.ph) this.sweep.rhythm.target = SWEEP_TARGET * 0.85;
+    this.ctx.gest?.scheme(this.ph ? 'none' : 'tap');
+    if (this.ph) this.ctx.gest.take();
     if (p.c.human) this.ctx.hud.message(`${p.c.short}: your cap!`, 'small', '#fff', 1.5);
     else if (this.throwNo > 0) this.ctx.hud.message('');
     this.updateCard();
@@ -453,7 +461,19 @@ class Curling {
     // Little curlers: the aim is straight at the middle, any button holds the strength, and the
     // sweeping happens by itself
     const little = !!p && p.c.human && helped(p.c);
-    if (this.phase === 'aim') {
+    if (this.ph && (this.phase === 'aim' || this.phase === 'power')) {
+      const g = ctx.gest, rel = g.take();
+      if (g.down) {
+        this.aim = clamp((g.dx / 80) * AIM_MAX, -AIM_MAX, AIM_MAX);
+        this.power = clamp((g.dy - 12) / 150, 0, 1);
+        if (this.phase === 'aim' && (g.dy > 12 || Math.abs(g.dx) > 8)) { this.phase = 'power'; this.t = 0; ctx.sound.pop(); }
+        this.updatePath();
+      } else if (rel && this.phase === 'power') {
+        if (this.power > 0.03) { ctx.buzz('thump'); this.release(); ctx.gest.scheme('rub'); }
+        else { this.phase = 'aim'; this.t = 0; }
+      }
+      if (this.t > 20) { this.power = (this.midPower ?? 0.5) * 0.7; this.release(); ctx.gest.scheme('rub'); }   // nobody waits for ever: a short one
+    } else if (this.phase === 'aim') {
       const held = ctx.held(p.i);
       if (!little) this.aim = clamp(this.aim + ((held.right ? 1 : 0) - (held.left ? 1 : 0)) * 7 * dt, -AIM_MAX, AIM_MAX);
       if (q.some((e) => (e.b === 'action' || little) && e.down)) { this.phase = 'power'; this.t = 0; this.power = 0; this.powerDir = 1; ctx.sound.pop(); this.updatePath(); }
@@ -472,11 +492,11 @@ class Curling {
         this.sweep.effort = s && s.x < TEE && s.x + (v * v) / (2 * DECEL) < TEE - 2 ? 1 : 0;
         if (this.sweep.effort) this.sweep.beat = 0.1;
       } else {
-        for (const e of q) if (e.down && e.b !== 'action') { this.sweep.rhythm.press(e.b, e.t); this.sweep.beat = 0.1; }
+        for (const e of q) if (e.down && e.b !== 'action') { this.sweep.rhythm.press(this.ph ? (this.sweep.rhythm.last === 'left' ? 'right' : 'left') : e.b, e.t); this.sweep.beat = 0.1; }
         this.sweep.effort = this.thrown && this.thrown.x < BACK ? clamp(this.sweep.rhythm.effort(now), 0, 1) : 0;
       }
       this.physics(dt);
-      if (this.stones.every((s) => s.vx === 0 && s.vz === 0)) { this.phase = 'settle'; this.t = 0; p.bot?.tap.stop(); }
+      if (this.stones.every((s) => s.vx === 0 && s.vz === 0)) { this.phase = 'settle'; this.t = 0; p.bot?.tap.stop(); ctx.gest?.scheme('tap'); }
     } else if (this.phase === 'settle') {
       if (this.t > 0.9) this.nextThrow();
     } else if (this.phase === 'scored') {
@@ -693,6 +713,12 @@ class Curling {
     const p = this.cur, ph = this.phase;
     const show = p && p.c.human && (ph === 'aim' || ph === 'power' || ph === 'slide');
     this.hudG.classList.toggle('cu-hidden', !show);
+    if (this.hint) {
+      if (!show || !this.ph) this.hint.set('');
+      else if (ph === 'aim') this.hint.set('pull', 'Drag to aim, pull back');
+      else if (ph === 'power') { const ok = this.midPower != null && Math.abs(this.power - this.midPower) < 0.05; this.hint.set('release', ok ? 'Let go!' : 'Pull to the yellow mark', ok ? 'go' : ''); }
+      else this.hint.set('rub', 'Rub to sweep: it goes further');
+    }
     if (!show) return;
     const touch = p.c.type === 'touch';
     const tip = helped(p.c) ? (ph === 'aim' ? 'hold any button for strength' : ph === 'power' ? 'let go at the yellow mark' : 'your toothbrush sweeps by itself: watch it go!')
@@ -769,6 +795,11 @@ export default {
     { verb: 'Steer', text: 'Aim with <b>left</b> and <b>right</b>. Aimed straight, the cap slides straight. Aimed to one side, it spins and curls back towards the middle, round a cap in the way. The dotted line shows the path.' },
     { verb: 'Power', text: 'Hold <b>action</b>: the strength meter swings up and down. Let go at the yellow mark to stop at the end of the dots.' },
     { verb: 'Rhythm', text: 'While it slides, tap <b>left</b> and <b>right</b> in turn to sweep with your toothbrush: it goes further and straighter. In the target, the middle is worth 3, the red ring 2, the blue ring 1.' },
+  ],
+  // phone mode (one touch player, gestures): the whole how-to
+  phoneHow: [
+    { g: 'pull', text: 'One finger: <b>drag sideways</b> to aim, <b>pull back</b> to the yellow mark for strength, let go.' },
+    { g: 'rub', text: 'While the cap slides, <b>rub</b> the glass to sweep: it goes further and straighter.' },
   ],
   helpers: {
     little: 'Your cap is <b>aimed for you</b> and you <b>sweep by yourself</b>. Hold <b>any button</b> and let go at the yellow mark.',

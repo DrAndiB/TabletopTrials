@@ -2,7 +2,7 @@
 // at the bottom (a tip and a few bars), labels pinned over things in the scene, and the start of a race
 // (take your marks, hold action, let go on the whistle).
 import * as THREE from '../../vendor/three.bundle.js';
-import { helped } from '../sizes.js';
+import { helped, phone } from '../sizes.js';
 import { clamp } from '../util.js';
 
 export const ORD = ['1st', '2nd', '3rd', '4th'];
@@ -36,8 +36,32 @@ export function hudKit(ctx) {
   style.textContent = CSS;
   el.appendChild(style);
   const mk = (cls, html = '') => { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; el.appendChild(d); return d; };
-  const touch = ctx.competitors.some((c) => c.type === 'touch');
-  return { el, mk, touch };
+  // pads along the bottom (several touch players), or one phone player with gestures and a hint pill
+  const touch = ctx.competitors.some((c) => c.type === 'touch') && !ctx.phone;
+  return { el, mk, touch, phone: ctx.phone, hint: ctx.phone ? new PhoneHint(ctx) : null };
+}
+
+// Phone mode: one pill at the bottom of the screen with a little animated finger and two or three words.
+// kinds: tap, tap2 (two thumbs in turn), hold, release, swipe2 (strokes in turn), rub, slide, slidev, pull,
+// drag, up, wait
+export class PhoneHint {
+  constructor(ctx) {
+    this.root = document.createElement('div');
+    this.root.className = 'ph-hint';
+    this.root.innerHTML = '<span class="ph-g"><i></i><i></i></span><b></b>';
+    ctx.hud.el.appendChild(this.root);
+    this.g = this.root.querySelector('.ph-g'); this.b = this.root.querySelector('b');
+    this.key = '';
+  }
+  // kind '' hides the pill
+  set(kind, text = '', tone = '') {
+    const key = `${kind}|${text}|${tone}`;
+    if (key === this.key) return;
+    this.key = key;
+    this.root.classList.toggle('on', !!kind);
+    this.root.dataset.tone = tone;
+    if (kind) { this.g.className = 'ph-g g-' + kind; this.b.textContent = text; }
+  }
 }
 
 // the top-left card: who is up, a line about the round, and the standings
@@ -61,6 +85,9 @@ export class Guide {
   constructor(kit, bars = []) {
     this.root = kit.mk('ev-g ev-hidden', `<div class="tip"></div>${bars.map((b) => `<div class="row" data-k="${b.key}"><span>${b.label}</span><div class="bar"><u></u><i></i><b></b></div></div>`).join('')}`);
     if (kit.touch) this.root.style.setProperty('--tb', '110px');
+    // phone mode: the hint pill says what to do; the box keeps only its bars
+    this.phone = !!kit.phone;
+    if (this.phone) { this.root.style.setProperty('--tb', '58px'); this.root.classList.add('ev-g-ph'); }
     this.tipEl = this.root.querySelector('.tip');
     this.bars = {};
     for (const b of bars) {
@@ -70,7 +97,7 @@ export class Guide {
     this.lastTip = null;
   }
   show(v) { this.root.classList.toggle('ev-hidden', !v); }
-  tip(text) { if (text !== this.lastTip) { this.tipEl.textContent = text; this.lastTip = text; } }
+  tip(text) { if (this.phone) return; if (text !== this.lastTip) { this.tipEl.textContent = text; this.lastTip = text; } }
   // value 0..1; opts: { go, low, mark (0..1 or null), zone [a, b] or null, hide }
   bar(key, value, opts = {}) {
     const B = this.bars[key];
@@ -90,7 +117,7 @@ export class Guide {
 
 // labels pinned to points in the scene (badges over racers, points over a landing)
 export class Tags {
-  constructor(kit, R) { this.layer = kit.mk('ev-tags'); this.R = R; this.items = new Map(); this.v = new THREE.Vector3(); }
+  constructor(kit, R) { this.layer = kit.mk('ev-tags'); this.R = R; this.kit = kit; this.items = new Map(); this.v = new THREE.Vector3(); }
   set(key, html, color) {
     let it = this.items.get(key);
     if (!it) { const d = document.createElement('div'); d.className = 'ev-tag'; this.layer.appendChild(d); it = { d, html: null }; this.items.set(key, it); }
@@ -130,6 +157,7 @@ export class RaceStart {
   marksText() {
     const humans = this.racers.filter((ru) => ru.c.human && !helped(ru.c));
     if (!humans.length) return 'Take your marks';
+    if (humans.every((ru) => phone(ru.c))) return 'Take your marks';
     return `Take your marks · hold ${humans.every((ru) => ru.c.type === 'touch') ? '●' : 'action'}`;
   }
   // per step, before the event handles strokes; q[i] = presses of racer i. Returns the presses left over
@@ -196,13 +224,14 @@ export function beatGauge(ratio, { lo = 0.9, hi = 1.18 } = {}) {
 // Fast-forward through a computer player's turn: a human taps action, the game runs five times as
 // fast until the next turn starts.
 export class Skipper {
-  constructor(ctx, kit) { this.ctx = ctx; this.on = false; this.badge = kit.mk('ev-ff ev-hidden', '⏩ fast-forward'); if (kit.touch) this.badge.style.setProperty('--tb', '110px'); }
+  constructor(ctx, kit) { this.ctx = ctx; this.on = false; this.badge = kit.mk('ev-ff ev-hidden', '⏩ fast-forward'); if (kit.touch) this.badge.style.setProperty('--tb', '110px'); if (kit.phone) this.badge.classList.add('ev-ff-ph'); }
   get humans() { return this.ctx.competitors.some((c) => c.human); }
+  // playing alone, the computer kids' turns fly by without a tap (ctx.autoSkip)
   update(botTurn, pressed) {
     if (!botTurn) { if (this.on) this.set(false); return; }
-    if (pressed && !this.on && this.humans) this.set(true);
+    if ((pressed || this.ctx.autoSkip) && !this.on && this.humans) this.set(true);
   }
-  set(on) { this.on = on; this.ctx.setSpeed(on ? 5 : 1); this.badge.classList.toggle('ev-hidden', !on); }
+  set(on) { this.on = on; this.ctx.setSpeed(on ? (this.ctx.autoSkip ? 24 : 5) : 1); this.badge.classList.toggle('ev-hidden', !on); }
 }
 
 // seconds as 12.34 s

@@ -17,6 +17,12 @@ export function beatFor(c, target) { return target * sizeOf(c).beat; }
 export function winFor(c, w) { return w * sizeOf(c).win; }
 // does this competitor get the helper at this level (1 = Kid and Little, 2 = Little only)?
 export function helped(c, level = 2) { return sizeOf(c).help >= level; }
+// Phone mode: one touch player with gestures instead of the three pads. Every event comes down to one
+// natural gesture; the extra rules look after themselves (see each event's phone branch).
+export function phone(c) { return !!(c && c.human && c.phone); }
+// The mash for a phone sprinter: full effort at `ref` taps a second, a little more above it.
+export const MASH = { ref: 9.5, pow: 0.5, cap: 1.06 };
+export function fitMash(r, c) { r.any = true; r.mash = { ...MASH, ref: MASH.ref * sizeOf(c).beat }; r.top = sizeOf(c).top; return r; }
 // fit a Rhythm to the player: slower beat, more forgiving of uneven taps, and for Little players any
 // button is the next step
 export function fitRhythm(r, c) {

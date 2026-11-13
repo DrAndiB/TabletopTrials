@@ -330,18 +330,23 @@ export class GameRenderer {
   }
 
   // Distance needed so `width` table units fill the screen width at the target.
-  distanceForWidth(width) {
+  distanceForWidth(width, full = false) {
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
+    // A phone held upright: fitting the whole width would leave the athletes tiny in a tall, mostly
+    // empty frame, so the camera moves in and shows a narrower slice of the scene instead.
+    const a = this.camera.aspect;
+    if (a < 1 && !full) width *= Math.max(0.56, 0.36 + 0.64 * a);
     return width / 2 / Math.tan(hfov / 2);
   }
 
   // Camera that looks at (tx, ty, tz) from a direction given by yaw (around y, 0 = from +z) and pitch
   // (above the horizon), at the distance that makes `width` units fill the screen width.
   // The shadow frustum follows the target. `shadowSpan` (units) sets how much ground gets shadows.
-  orbit(tx, ty, tz, { yaw = 0, pitch = 0.5, width = this.viewWidth, shadowSpan = null } = {}) {
+  // `full` keeps the whole width in view even on an upright phone (for venues played from side to side).
+  orbit(tx, ty, tz, { yaw = 0, pitch = 0.5, width = this.viewWidth, shadowSpan = null, full = false } = {}) {
     this.target.set(tx, ty, tz);
-    const d = this.distanceForWidth(width);
+    const d = this.distanceForWidth(width, full);
     const cp = Math.cos(pitch);
     this.camera.position.set(tx + d * cp * Math.sin(yaw), ty + d * Math.sin(pitch), tz + d * cp * Math.cos(yaw));
     this.camera.lookAt(this.target);

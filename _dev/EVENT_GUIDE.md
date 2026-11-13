@@ -79,6 +79,22 @@ The instance:
 `skill` (CPU preset), `rand` (seeded RNG), `quality`, `hud` (`el` for your own meters, `message(text,
 kind, color, dur)`, `flash(text, color)`, `chip(i, info, cls)`), `sound`, `R` (renderer), `THREE`.
 
+## Phone mode
+One touch player (and the option "One touch player: Gestures") plays without pads: `ctx.phone` is true, that
+competitor has `c.phone`, and `ctx.gest` is the gesture surface (`js/gestures.js`; null otherwise, so guard with
+`ctx.gest?.`). An event picks a scheme per phase with `ctx.gest.scheme(mode, opts)`:
+`tap` (every touch is action, held while down), `halves` (left/right half of the screen: two thumbs), `stroke`
+(swipes are left/right presses with a strength `e.p`; `{ hold: true }` lets a resting finger be a hold), `rub`
+(each change of direction is the next press), `stick` (drag from the touch point: left/right/action held) and
+`none` (read the finger yourself: `gest.down`, `gest.dx`, `gest.dy`, `gest.travel`, `gest.take()` for the last
+lift). `{ steer: { axis: 'x' | 'y', range } }` also feeds `pad.ax` (-1..1), which `pad.steer` returns.
+The rule of thumb: one natural gesture per event, everything else automatic (auto-run, auto-turn, auto-tuck),
+and the computer kids must stay beatable but not trivial; `_dev/tools/checks/phone_events.js` plays every event
+with scripted gestures. Say what to do with the hint pill (`hudKit(ctx).hint.set(kind, text, tone)`, kinds in
+`common.js`), give the event a `phoneHow: [{ g, text }]` for the intro card, and call `ctx.buzz(kind)` for the
+big moments. Distances are in 1/360 of the screen's short side. A finger can stay down across a scheme change: it
+starts the new gesture from where it is.
+
 ## Fairness rule for rhythm
 Use `Rhythm.effort()`: full effort at the target cadence, at most +4 % above it, and only erratic
 tapping (coefficient of variation > 0.32) costs anything. Keyboard and touch players must be able

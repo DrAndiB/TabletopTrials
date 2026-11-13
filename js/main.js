@@ -12,9 +12,15 @@ import { flagURL } from './flags.js';
 import { paintedFlagCanvas } from './props.js';
 import { recordFor, offerRecord } from './records.js';
 import { rng } from './util.js';
+import { Gestures } from './gestures.js';
+import { hapticsOn, setHaptics } from './haptics.js';
 
 const $ = (s) => document.querySelector(s);
 const params = new URLSearchParams(location.search);
+// Running inside the Android app (Capacitor): no fullscreen button, the system back button drives the
+// menus (window.__ttBack below) and the screen orientation can be picked in the options.
+const IN_APP = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+document.documentElement.classList.toggle('in-app', IN_APP);
 const SETTINGS_KEY = 'tabletop-trials.settings.v1';
 const TYPES = ['keys', 'touch', 'cpu', 'off'];
 const TYPE_LABEL = { keys: 'Keyboard', touch: 'Touch', cpu: 'Computer kid', off: 'Not playing' };
@@ -23,9 +29,16 @@ const SEAT_COLORS = ['#e23b2e', '#2f6fe0', '#f2c230', '#2fae5a'];
 const ORD = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
 const MEDAL = ['gold', 'silver', 'bronze'];
 
-const touchFirst = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
+const touchFirst = IN_APP || (matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches);
+const CAN_TOUCH = touchFirst || matchMedia('(any-pointer: coarse)').matches;
+document.documentElement.classList.toggle('can-touch', CAN_TOUCH);
+document.documentElement.classList.toggle('touch-first', touchFirst);
 const defaults = {
   mode: 'trials', event: EVENTS[0].id, trials: EVENTS.map((e) => e.id), skill: 'normal', quality: 'auto', fps: 60,
+  controls: 'gestures',                 // one touch player: 'gestures' (the whole screen) or 'pads' (◀ ● ▶)
+  skipcpu: touchFirst ? 'on' : 'off',   // playing alone: the computer kids' turns run fast-forward by themselves
+  haptics: hapticsOn() ? 'on' : 'off',
+  orient: 'auto',                       // Android app only: auto (follows the phone), portrait or landscape
   teams: DEFAULTS.map((code, i) => ({ type: i === 0 ? (touchFirst ? 'touch' : 'keys') : 'cpu', code })),
 };
 let settings = loadSettings();
@@ -39,6 +52,10 @@ function loadSettings() {
       if (!EVENTS.some((e) => e.id === out.event)) out.event = EVENTS[0].id;
       out.trials = Array.isArray(s.trials) ? s.trials.filter((id) => EVENTS.some((e) => e.id === id)) : EVENTS.map((e) => e.id);
       if (!out.trials.length) out.trials = EVENTS.map((e) => e.id);
+      if (!['gestures', 'pads'].includes(out.controls)) out.controls = defaults.controls;
+      if (!['on', 'off'].includes(out.skipcpu)) out.skipcpu = defaults.skipcpu;
+      if (!['auto', 'portrait', 'landscape'].includes(out.orient)) out.orient = defaults.orient;
+      out.haptics = hapticsOn() ? 'on' : 'off';
       return out;
     }
   } catch (e) { /* ignore */ }
@@ -54,12 +71,14 @@ if (quality === 'auto') R.setQuality(Perf.autoTier(R));
 const input = new Input();
 const sound = new Sound();
 const hud = new Hud($('#hud'));
-const game = new Game(R, input, sound, hud);
+const gestures = new Gestures($('#gest'));
+const game = new Game(R, input, sound, hud, gestures);
+game.skipCpu = settings.skipcpu === 'on';
 const perf = new Perf(R, { onTierChange: (q) => R.setQuality(q) });
 perf.setAuto(quality === 'auto');
 perf.cap = params.get('fps') ? params.get('fps') !== 'max' : settings.fps !== 'max';
 if (params.get('debug')) perf.toggleOverlay(true);
-window.__tt = { game, R, input, sound, perf, settings: () => settings };
+window.__tt = { game, R, input, sound, perf, gestures, settings: () => settings };
 
 let screen = 'title';
 let lastT = performance.now();
@@ -72,7 +91,8 @@ function showScreen(name) {
   for (const el of document.querySelectorAll('.screen')) el.classList.toggle('active', el.id === 'screen-' + name);
   document.body.dataset.screen = name;
   if (['title', 'setup', 'country', 'keys'].includes(name)) sound.startMusic(); else sound.stopMusic();
-  $('#touch').classList.toggle('show', name === 'none' && game.competitors?.some((c) => c.type === 'touch'));
+  $('#touch').classList.toggle('show', name === 'none' && game.competitors?.some((c) => c.type === 'touch' && !c.phone));
+  document.body.classList.toggle('phone', !!game.phonePad && ['none', 'pause'].includes(name));
 }
 
 // ---------- teams ----------
@@ -85,10 +105,12 @@ function teamName(i) {
 function teamSeed(i) { const c = settings.teams[i].code; return (c.charCodeAt(0) * 31 + c.charCodeAt(1)) * 7 + i * 3 + 1; }
 function competitorsFromTeams() {
   const list = [];
+  // one touch player plays with gestures on the whole screen; several share the screen with pads
+  const gest = settings.controls === 'gestures' && settings.teams.filter((t) => t.type === 'touch').length === 1;
   settings.teams.forEach((t, i) => {
     if (t.type === 'off') return;
     const c = countryByCode(t.code);
-    list.push({ slot: i, type: t.type, size: t.type === 'cpu' ? 'big' : (t.size || 'big'), code: c.code, name: teamName(i), short: teamName(i), paint: c.paint, seed: teamSeed(i), number: i + 1, color: SEAT_COLORS[i], flag: flagURL(c.code, 72) });
+    list.push({ slot: i, type: t.type, phone: t.type === 'touch' && gest, size: t.type === 'cpu' ? 'big' : (t.size || 'big'), code: c.code, name: teamName(i), short: teamName(i), paint: c.paint, seed: teamSeed(i), number: i + 1, color: SEAT_COLORS[i], flag: flagURL(c.code, 72) });
   });
   return list;
 }
@@ -97,7 +119,7 @@ function keyHint(i, t) {
   const b = input.bindings[i];
   const k = (c) => `<kbd>${input.keyLabel(c)}</kbd>`;
   if (t.type === 'keys') return `${k(b.left)} ${k(b.right)} ${k(b.action)}`;
-  if (t.type === 'touch') return 'On-screen pads: ◀ ● ▶';
+  if (t.type === 'touch') return settings.controls === 'gestures' && settings.teams.filter((o) => o.type === 'touch').length === 1 ? 'Gestures: taps and swipes anywhere' : 'On-screen pads: ◀ ● ▶';
   if (t.type === 'cpu') return 'Plays by itself';
   return 'Sits this one out';
 }
@@ -171,6 +193,9 @@ for (const el of document.querySelectorAll('[data-opt]')) {
     const k = el.dataset.opt, v = el.dataset.val;
     settings[k] = v;
     if (k === 'quality') applyQuality(v);
+    if (k === 'skipcpu') game.skipCpu = v === 'on';
+    if (k === 'haptics') setHaptics(v === 'on');
+    if (k === 'orient') applyOrientation(v);
     saveSettings(); renderSetup();
   });
 }
@@ -188,6 +213,14 @@ function presetIds(kind) {
 for (const b of document.querySelectorAll('#trials-pick button')) {
   b.addEventListener('click', () => { sound.click(); settings.trials = presetIds(b.dataset.pick); saveSettings(); renderSetup(); });
 }
+
+// Android app: the screen orientation, through the app's own plugin (OrientationPlugin.java), called on
+// Capacitor's bridge directly since the game loads no Capacitor JavaScript
+function applyOrientation(mode) {
+  if (!IN_APP) return;
+  try { window.Capacitor.nativePromise('Orientation', 'set', { mode }).catch(() => {}); } catch (e) { /* ignore */ }
+}
+applyOrientation(settings.orient);
 
 function applyQuality(q) {
   quality = q;
@@ -306,18 +339,25 @@ function startRun() {
   const competitors = competitorsFromTeams();
   if (!competitors.length) return;
   const events = settings.mode === 'trials' ? trialsEvents() : [settings.event];
-  run = { events, index: 0, competitors, tally: Object.fromEntries(competitors.map((c) => [c.slot, [0, 0, 0]])), seed: (Math.random() * 1e6) | 0 };
+  run = { events, index: 0, competitors, tally: Object.fromEntries(competitors.map((c) => [c.slot, [0, 0, 0]])), seed: (Math.random() * 1e6) | 0, plays: 0 };
   loadEvent();
 }
 
-async function loadEvent() {
+// someone playing alone: the fly-in shows once per event, and "Again" goes straight back to the start
+const seenFlyIn = new Set();
+function soloRun() { return !!run && run.competitors.filter((c) => c.type !== 'cpu').length === 1; }
+
+async function loadEvent({ retry = false } = {}) {
   const def = eventById(run.events[run.index]);
+  // a new try is a new race: another whistle, other gusts
+  if (retry && !params.get('test')) run.seed = (Math.random() * 1e6) | 0;
   hud.visible(false);
   showScreen('loading');
   showLoading(def.loading || `Setting up the ${def.name.toLowerCase()}…`);
   await new Promise((r) => setTimeout(r, 40));
   await game.load(def, run.competitors, { skill: settings.skill, seed: run.seed + run.index * 101 });
   await warmUp();
+  if (retry) { screen = 'intro'; goEvent(true); return; }
   showIntro(def);
 }
 
@@ -329,23 +369,32 @@ function showIntro(def) {
   // the helpers for Little and Kid players, when someone plays at that size
   const sizes = new Set(game.competitors.filter((c) => c.human).map((c) => c.size));
   const helps = ['little', 'kid'].filter((z) => sizes.has(z) && def.helpers?.[z]).map((z) => `<div class="how help"><span class="verb">${SIZES[z].label}</span><span>${def.helpers[z]}</span></div>`).join('');
-  $('#intro-how').innerHTML = def.how.map((h) => `<div class="how"><span class="verb">${h.verb}</span><span>${h.text}</span></div>`).join('') + helps;
+  // a phone player gets the gesture version: one or two lines with the little finger animation
+  const ph = game.phonePad && game.competitors.filter((c) => c.human).length === 1 && def.phoneHow;
+  const rec = recordFor(def.id);
+  $('#intro-how').innerHTML = (ph
+    ? def.phoneHow.map((h) => `<div class="how how-ph"><span class="ph-g g-${h.g}"><i></i><i></i></span><span>${h.text}</span></div>`).join('')
+    : def.how.map((h) => `<div class="how"><span class="verb">${h.verb}</span><span>${h.text}</span></div>`).join('')) + helps
+    + (rec && soloRun() ? `<div class="how how-rec"><span class="verb">Record</span><span>The house record to beat: <b>${rec.text}</b> (${rec.name})</span></div>` : '');
   const k = (c) => `<kbd>${input.keyLabel(c)}</kbd>`;
   $('#intro-players').innerHTML = game.competitors.filter((c) => c.human).map((c) => {
     const b = input.bindings[c.slot];
-    const keys = c.type === 'touch' ? 'touch pads' : `${k(b.left)}${k(b.right)} ${k(b.action)}`;
+    const keys = c.phone ? 'taps and swipes' : c.type === 'touch' ? 'touch pads' : `${k(b.left)}${k(b.right)} ${k(b.action)}`;
     return `<span class="ip" style="border-color:${c.color}"><img src="${c.flag}" alt="">${c.name}: ${keys}</span>`;
   }).join('') || '<span class="small">Only computer kids this time: sit back and watch.</span>';
   showScreen('intro');
 }
 
-function goEvent() {
+function goEvent(quick = false) {
   if (screen !== 'intro') return;
-  sound.click();
+  if (!quick) sound.click();
   showScreen('none');
-  input.buildTouch($('#touch'), game.competitors.filter((c) => c.type === 'touch').map((c) => c.slot), SEAT_COLORS);
-  $('#touch').classList.toggle('show', game.competitors.some((c) => c.type === 'touch'));
-  game.start();
+  const pads = game.competitors.filter((c) => c.type === 'touch' && !c.phone);
+  input.buildTouch($('#touch'), pads.map((c) => c.slot), SEAT_COLORS);
+  $('#touch').classList.toggle('show', pads.length > 0);
+  const id = game.def.id, seen = soloRun() && seenFlyIn.has(id);
+  seenFlyIn.add(id);
+  game.start({ flyIn: game.cinematics && !quick && !seen });
   lastT = performance.now();
 }
 
@@ -377,7 +426,10 @@ game.onEventEnd = ({ def, results }) => {
   run.last = { def, rows };
   // the medal ceremony in the room, then the results
   const medallists = rows.filter((r) => r.medal).slice(0, 3).map((r, k) => ({ c: run.competitors[r.i], place: r.place, medal: r.medal, slot: k }));
-  setTimeout(() => game.ceremony(medallists).then(showResults), (def.resultsDelay ?? 1.6) * 1000);
+  // a quick "Again" on one's own skips the ceremony after the first time
+  const quick = run.events.length === 1 && soloRun() && run.plays > 0;
+  run.plays++;
+  setTimeout(() => (quick ? Promise.resolve() : game.ceremony(medallists)).then(showResults), (def.resultsDelay ?? 1.6) * 1000);
 };
 
 function coin(medal, cls = '') {
@@ -407,6 +459,8 @@ function showResults() {
   }
   const list = $('#results-list');
   list.innerHTML = '';
+  const house = recordFor(def.id);
+  $('#results-record').textContent = house ? `House record: ${house.text} (${house.name})` : '';
   rows.forEach((r) => {
     const c = C[r.i];
     const li = document.createElement('li');
@@ -444,7 +498,7 @@ function medalTableHtml() {
 function nextFromResults() {
   if (screen !== 'results' || !run) return;
   sound.click();
-  if (run.events.length === 1) { loadEvent(); return; }
+  if (run.events.length === 1) { loadEvent({ retry: soloRun() }); return; }
   if (run.index < run.events.length - 1) { run.index++; loadEvent(); return; }
   showClosing();
 }
@@ -570,6 +624,18 @@ input.on((type, e) => {
   }
 });
 
+// Android app: the system back button. 'exit' sends the app to the background (MainActivity.java).
+window.__ttBack = () => {
+  if (input.capture) { input.capture = null; if (screen === 'keys') renderKeys(); return 'ok'; }
+  if (screen === 'title') return 'exit';
+  if (screen === 'none' || screen === 'pause') togglePause();
+  else if (screen === 'setup') showScreen('title');
+  else if (screen === 'country') $('#btn-country-back').click();
+  else if (screen === 'keys') $('#btn-keys-back').click();
+  else if (screen === 'intro' || screen === 'results' || screen === 'closing') toMenu();
+  return 'ok';
+};
+
 window.addEventListener('resize', () => R.resize());
 document.addEventListener('visibilitychange', () => { if (document.hidden && screen === 'none') togglePause(); });
 
@@ -602,6 +668,8 @@ function frame(now) {
     if (params.get('event')) { settings.event = params.get('event'); settings.mode = 'single'; }
     if (params.get('mode')) settings.mode = params.get('mode');
     if (params.get('skill')) settings.skill = params.get('skill');
+    if (params.get('controls')) settings.controls = params.get('controls');
+    if (params.get('skipcpu')) { settings.skipcpu = params.get('skipcpu'); game.skipCpu = settings.skipcpu === 'on'; }
     const competitors = competitorsFromTeams();
     if (params.get('trials')) settings.trials = params.get('trials').split(',');
     run = { events: settings.mode === 'trials' ? trialsEvents() : [settings.event], index: 0, competitors, tally: Object.fromEntries(competitors.map((c) => [c.slot, [0, 0, 0]])), seed: +(params.get('seed') || 11) };

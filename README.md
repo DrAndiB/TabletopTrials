@@ -41,6 +41,33 @@ animals cheer from cardboard-box stands. Sibling of [Tabletop Turbo](https://git
 
 Default keys: P1 ← → ↑ · P2 A D W · P3 J L I · P4 Num 4, Num 6, Num 8 (all can be changed under Keys).
 
+## On a phone
+One touch player plays in **phone mode**: no buttons, the whole screen takes taps and swipes, and every event
+comes down to one natural gesture (the extra rules look after themselves). A pill at the bottom shows the gesture
+with a little animated finger, and the phone gives a tick for every stroke.
+
+| Event | The gesture |
+|---|---|
+| Sprint | Thumbs off until the whistle, then both thumbs as fast as they go: tapping speed is running speed. |
+| Hurdles | The legs run by themselves; tap as the feet cross the green strip before each hurdle. |
+| Swimming | Every swipe is an arm stroke (long swipes pull harder); skip a stroke to breathe. |
+| Diving | Three taps on the closing ring, hold to tuck and spin, let go on green; a sideways swipe is a half twist. |
+| Javelin | Tap to run, pull a finger back to tip the pencil up (30 to 40°), let go before the red line. |
+| Pole vault | Tap to run, press and hold as the ring closes on the tape, let go when the needle is in the green. |
+| Ski jump | Tap to go, tap in the green to jump, slide a thumb up or down to lean, lift it to land. |
+| Speed skating | Long swipes down the straights; rest a thumb on the glass through the bends. |
+| Curling | One finger: drag sideways to aim, pull back for strength, let go; then rub to sweep. |
+| Bobsled | Both thumbs to push off, then slide a thumb left and right to steer. |
+| Halfpipe | Tap to pump at the bottom; in the air drag sideways to spin and down to grab. |
+| Biathlon | Hold to ski hard, lift to rest and calm the heart; at the range drag the sight and lift to shoot. |
+
+Playing alone, the computer kids' turns run fast-forward by themselves, the fly-in shows once per event, and
+"Again" after a single event goes straight back to the start with the house record to beat. Options on the setup
+screen: **One touch player** (Gestures or the old ◀ ● ▶ Buttons), **Computer turns** (Watch or Fast-forward) and
+**Vibration**. Two or more touch players share the screen with the button pads, as before.
+
+There is an Android app too: the same game in a Capacitor wrapper, see [`app/README.md`](app/README.md).
+
 ## Run it locally
 No build step. Serve the folder and open it in a browser:
 
@@ -56,6 +83,8 @@ python -m http.server 8140
   bloom on lights and fire and ambient occlusion (half resolution on Medium). Auto starts on High with a
   graphics card, Medium otherwise, and lowers the resolution, then the quality, if frames drop.
 - Figurines are one skinned mesh each, posed from flat numeric poses (`js/figurine.js`).
+- Phone mode (`js/gestures.js`): one touch player's taps, swipes, rubs and drags become the same pad presses a
+  keyboard makes, plus analog steering and aiming; each event picks a gesture scheme per phase.
 - Events plug in through a small contract (`_dev/EVENT_GUIDE.md`), share input "verbs"
   (`js/verbs.js`: rhythm, timing, power, steer) and run on a fixed 120 Hz step, so keyboard, touch and
   computer players go through the same code path.
@@ -66,6 +95,7 @@ python -m http.server 8140
 
 ## Checks
 Headless checks use Playwright with the bundled Chromium (`_dev/tools/tt.py`), for example the full
-Trials flow, computer-jumper distances and a placement check (is everything standing on something, not
+Trials flow, computer-jumper distances, phone mode with scripted gestures in all twelve events
+(`phone_events.js`, `phone_flow.js`) and a placement check (is everything standing on something, not
 floating, sunk or inside something) in `_dev/tools/checks/`. The ski jump physics can be tuned
 without a browser: `node _dev/tools/checks/skijump_sim.mjs`.

@@ -1,7 +1,21 @@
 # Backlog: playtest notes collected for the next fix round
 
 ## Open
-(nothing yet)
+- Phone mode was tuned against scripted gestures, not thumbs: after a playtest on a real phone, look at the
+  sprint's tapping speed for full effort (`MASH.ref` in `js/sizes.js`, 9.5 taps a second now), the swipe beat
+  in swimming and speed skating (`TARGET_PH`), the javelin's degrees per unit pulled, the curling pull length
+  and the biathlon sight speed (`PH_SIGHT`).
+- In portrait the javelin, pole vault and halfpipe athletes are still on the small side; landscape frames them
+  better.
+
+## Done (v27)
+- Phone mode: one touch player plays with gestures on the whole screen instead of the three pads; every event
+  reworked to one natural gesture (see the README table), a hint pill with an animated finger instead of the
+  sentences, vibration for every stroke, a phone HUD (flags instead of names, nothing under the corner buttons,
+  meters out of the athlete's way in landscape) and a closer camera on an upright phone.
+- Playing alone: computer turns fast-forward by themselves, the fly-in shows once per event, "Again" skips the
+  intro and the ceremony and shows the house record to beat.
+- Android app: Capacitor wrapper in `app/`, built by GitHub Actions into the android-preview release.
 
 ## Done (v26)
 - Crowd sounds removed for now; quiet chip-tune music instead (menu theme, summer march, winter waltz).

@@ -6,7 +6,7 @@ import { Figurine, POSES, blendPose } from '../figurine.js';
 import { crowd, banner, paintedFlagTexture } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles } from '../fx.js';
-import { fitRhythm, helped } from '../sizes.js';
+import { fitRhythm, helped, phone } from '../sizes.js';
 import { paneWindow, daySky, sunbeams, sunPatch, Dog, bakeStatic } from '../venues.js';
 import { hudKit, Skipper } from './common.js';
 import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
@@ -23,6 +23,7 @@ const A0 = 8, A_RATE = 55, A_MAX = 75;   // angle while holding: start, degrees 
 const PEN_L = 12;              // the pencil javelin
 const ZONE = [-29, -17];       // the throw zone on the runway: start drawing back in here
 const ATTEMPTS = 3;
+const PULL0 = 10, PULL_DEG = 0.45;    // phone: a pull this long starts the draw; degrees per unit pulled after that
 const ORD = ['1st', '2nd', '3rd', '4th'];
 // computer throwers: run-up cadence, where they start drawing back (units before the line), angle spread
 const BOT = {
@@ -295,7 +296,9 @@ class Javelin {
   buildHud() {
     const el = this.ctx.hud.el;
     // watching a computer thrower: action fast-forwards
-    this.skipper = new Skipper(this.ctx, hudKit(this.ctx));
+    const hk = hudKit(this.ctx);
+    this.hint = hk.hint;
+    this.skipper = new Skipper(this.ctx, hk);
     const style = document.createElement('style');
     style.textContent = `.jv-card{position:absolute;left:12px;top:12px;width:min(260px,42vw);background:rgba(255,244,220,.95);border:3px solid #1f1a17;border-radius:14px;box-shadow:0 3px 0 #1f1a17;padding:8px 10px;font:700 12px/1.25 Rubik,sans-serif;color:#1f1a17}
       .jv-card .who{display:flex;align-items:center;gap:7px;font:400 18px/1.1 "Lilita One",Impact,sans-serif}.jv-card .who img{height:20px;width:30px;object-fit:cover;border:2px solid #1f1a17;border-radius:3px}
@@ -310,12 +313,14 @@ class Javelin {
       .jv-g .bar i{position:absolute;inset:0 auto 0 0;width:0;background:#ef7d2c}.jv-g .bar.go i{background:#2fae5a}
       .jv-g .bar b{position:absolute;top:0;bottom:0;width:4px;background:#1f1a17;margin-left:-2px}
       .jv-g .bar u{position:absolute;top:0;bottom:0;background:#bfe6c7}.jv-g .bar s{position:absolute;top:0;bottom:0;right:0;width:5px;background:#e23b2e}
+      .jv-g.jv-ph{width:min(240px,62vw);padding:2px 10px 6px}.jv-g.jv-ph .tip{display:none}.jv-g.jv-ph .ang{font-size:34px}
       .jv-hidden{display:none}`;
     el.appendChild(style);
     const mk = (cls, html) => { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; el.appendChild(d); return d; };
     this.hudCard = mk('jv-card', '<div class="who"></div><div class="rd"></div><ol></ol>');
     this.hudG = mk('jv-g jv-hidden', '<div class="tip"></div><div class="ang"></div><div class="row"><span>Speed</span><div class="bar sp"><i></i></div></div>');
-    if (this.ctx.competitors.some((c) => c.type === 'touch')) this.hudG.style.setProperty('--tb', '110px');
+    if (this.ctx.competitors.some((c) => c.type === 'touch')) this.hudG.style.setProperty('--tb', this.ctx.phone ? '58px' : '110px');
+    if (this.ctx.phone) this.hudG.classList.add('jv-ph');
   }
 
   // ---------------------------------------------------------------- flow
@@ -344,7 +349,11 @@ class Javelin {
     th.fig.setExpression('focus');
     if (th.bot) { th.bot.started = false; th.bot.go = 0.8 + this.r() * 0.6; const B = BOT[this.ctx.skillName] || BOT.normal; th.bot.holdAt = Math.max(9, B.hold[0] + this.r.gauss() * B.hold[1]); th.bot.angle = 36 + this.r.gauss() * B.err; }
     this.ctx.competitors.forEach((c, i) => this.ctx.hud.chip(i, this.throwers[i].best != null ? `${this.throwers[i].best.toFixed(1)} m` : '', i === th.i ? 'active' : ''));
-    if (th.c.human) this.ctx.hud.message(`${th.c.short}: ${th.c.type === 'touch' ? 'tap ◀ ▶' : 'tap left, right'} to run`, 'small', '#fff');
+    // Phone mode: a tap starts the run and the legs do the rest; then pull a finger back to tip the
+    // pencil up (the further the pull, the steeper) and let go just before the red line.
+    this.ath.ph = phone(th.c) && !this.ath.little;
+    this.ctx.gest?.scheme(this.ath.ph ? 'none' : 'tap');
+    if (th.c.human && !this.ath.ph) this.ctx.hud.message(`${th.c.short}: ${th.c.type === 'touch' ? 'tap ◀ ▶' : 'tap left, right'} to run`, 'small', '#fff');
     else this.ctx.hud.message('');
     this.updateCard();
   }
@@ -390,15 +399,24 @@ class Javelin {
         if (!a.started) { a.started = true; this.phase = 'runup'; this.t = 0; ctx.hud.message(''); }
         if (res === 'stumble') { a.v *= 0.85; ctx.sound.stumble(); } else ctx.sound.step(th.c.human ? 0.8 : 0.4);
       }
+      if (a.ph) {
+        const g = ctx.gest, pull = Math.hypot(g.dx, g.dy);
+        const rel = g.take();
+        if (!a.started) { if (g.down || rel) { a.started = true; this.phase = 'runup'; this.t = 0; ctx.buzz('tap'); } }
+        else if (a.holding) {
+          if (g.down) a.angle = clamp(A0 + (pull - PULL0) * PULL_DEG, A0, A_MAX);
+          else if (rel) { this.release(now); return; }
+        } else if (g.down && pull > PULL0 && this.t > 0.15) { a.holding = true; a.holdT = now; ctx.sound.pop(); ctx.buzz('tap'); }
+      }
       if (this.phase === 'ready' && this.t > 12) { this.foul('No throw'); return; }
       if (a.started && !a.released) {
-        const eff = a.holding ? 0 : a.rhythm.effort(now);
+        const eff = a.holding ? 0 : a.ph ? 1 : a.rhythm.effort(now);
         a.effort = eff;
         // drawing back: the run carries on by itself at the speed you had, no more tapping needed
         const target = a.holding ? a.v : VMAX * eff;
         a.v += (target - a.v) * (1 - Math.exp(-(target > a.v ? ACCEL : 1.2) * dt));
         // a Little thrower's arm does it all by itself
-        if (a.holding) a.angle = Math.min(A_MAX, A0 + (now - a.holdT) * A_RATE);
+        if (a.holding && !a.ph) a.angle = Math.min(A_MAX, A0 + (now - a.holdT) * A_RATE);
         if (a.little && !a.holding && a.x > LINE_X - (a.v * 0.55 + 2.5)) { a.holding = true; a.holdT = now; ctx.sound.pop(); }
         if (a.little && a.holding && a.angle >= 35) { this.release(now); return; }
         a.x += a.v * dt;
@@ -434,6 +452,7 @@ class Javelin {
   release(t) {
     const a = this.ath, th = this.cur, ctx = this.ctx;
     a.released = true; a.holding = false; a.relT = t;
+    if (a.ph) { ctx.buzz('thump'); ctx.gest.scheme('tap'); }
     th.bot?.tap.stop();
     const ang = deg(a.angle);
     const v0 = 28 + 1.2 * a.v;
@@ -474,6 +493,7 @@ class Javelin {
     th.marks.push(null);
     th.bot?.tap.stop();
     this.ath.released = true;
+    if (this.ath.ph) { ctx.buzz('bad'); ctx.gest.scheme('tap'); }
     this.phase = 'foul'; this.t = 0;
     this.land = null;
     ctx.sound.whistle(0.3); ctx.sound.aww();
@@ -590,6 +610,13 @@ class Javelin {
     if (showP) { this.protractor.position.set(a.x - 4, 15, 3); this.protractor.scale.setScalar(th.c.human ? 1.9 : 1.2); this.needle.rotation.z = deg(a.angle); }
     const show = th && th.c.human && (ph === 'ready' || ph === 'runup');
     this.hudG.classList.toggle('jv-hidden', !show);
+    if (this.hint) {
+      const ok = show && a.angle >= 30 && a.angle <= 40;
+      if (!show || !a.ph) this.hint.set('');
+      else if (!a.started) this.hint.set('tap', 'Tap to run', 'go');
+      else if (a.holding) this.hint.set('release', ok ? 'Let go before the line!' : a.angle > 40 ? 'Too steep: ease off' : 'Pull further: 30 to 40°', ok ? 'go' : '');
+      else this.hint.set('pull', 'Pull back to aim');
+    }
     if (!show) return;
     const e = clamp(a.v / VMAX, 0, 1);
     const sp = this.hudG.querySelector('.sp');
@@ -620,7 +647,8 @@ class Javelin {
       want = { x: RUN_X - 4, y: 6, z: -18, yaw: 0.25, pitch: 0.3, width: 70 };
     } else {
       const ax = this.ath ? this.ath.x : RUN_X;
-      want = { x: ax + 22, y: 5, z: 0, yaw: 0.18, pitch: 0.3, width: 78 };
+      // (an upright phone shows a narrower slice: keep the thrower in it)
+      want = { x: ax + (R.camera.aspect < 1 ? 9 : 22), y: 5, z: 0, yaw: 0.18, pitch: 0.3, width: 78 };
     }
     const rate = ph === 'flight' ? 4 : 2.6;
     for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], rate, Math.min(dt, 0.1));
@@ -654,6 +682,11 @@ export default {
     { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to run up: faster run, longer throw.' },
     { verb: 'Power', text: 'On the green tape, <b>hold action</b> to draw back: the pencil tips up as you hold. Let go at <b>30 to 40°</b>.' },
     { verb: 'Timing', text: 'While you hold, you keep running by yourself. Still holding at the <b>red line</b>? The pencil goes there. Run over it without holding and the throw doesn\'t count. Three throws, the best one counts.' },
+  ],
+  // phone mode (one touch player, gestures): the whole how-to
+  phoneHow: [
+    { g: 'tap', text: 'Tap to start the run-up.' },
+    { g: 'pull', text: 'Then <b>pull a finger back</b> to tip the pencil up (30 to 40° is best) and <b>let go</b> before the red line.' },
   ],
   helpers: {
     little: 'Tap <b>any button</b> on a steady beat to run. Tap <b>action</b> to throw, or the throw happens by itself at the line, always at a great angle.',

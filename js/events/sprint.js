@@ -4,7 +4,8 @@ import * as THREE from '../../vendor/three.bundle.js';
 import { Figurine, POSES, blendPose } from '../figurine.js';
 import { crowd, banner, letterBlock, crayon } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
-import { fitRhythm, winFor, helped } from '../sizes.js';
+import { fitRhythm, fitMash, winFor, helped, phone } from '../sizes.js';
+import { PhoneHint } from './common.js';
 import { Particles } from '../fx.js';
 import { sunbeams, bakeStatic } from '../venues.js';
 import * as TX from '../textures.js';
@@ -86,8 +87,9 @@ export class Sprint {
         anim: 0, effort: 0, effortAnim: 0, runW: 0, stumbleT: 0, cards: 0, heldBack: false, block: false, slipT: 0, zone: 'drive',
         bot: c.human ? null : new BotTapper(c.pad, rng(c.seed * 31 + 7)),
         botCad: this.target * (BOT_PACE[this.ctx.skillName] || BOT_PACE.normal).cad * (0.97 + this.r() * 0.06),
-        pose: POSES.stand(0), idle: this.r() * 10, place: null, beat: 0,
+        pose: POSES.stand(0), idle: this.r() * 10, place: null, beat: 0, ph: phone(c),
       };
+      if (run.ph) this.fitPhone(run);
       this.runners.push(run);
       // starting blocks: two little toy bricks per lane
       blocks.push({ x: -4.2, y: 0.6, z: z + 0.65, color: c.paint.shirt }, { x: -6.0, y: 0.6, z: z - 0.65, color: c.paint.shirt });
@@ -491,6 +493,7 @@ export class Sprint {
       .rm .b u{position:absolute;top:-2px;bottom:-2px;width:3px;background:#1f1a17;left:96.2%}
       .rm .n{position:absolute;right:8px;top:4px;font-size:15px;opacity:0;transition:opacity .05s}.rm .n.on{opacity:1}
       .rm.go .b i{background:#2fae5a}.rm.ok .b i{background:#f2c230}.rm.fast .b i{background:#e23b2e}
+      .rm.rm-ph{left:50%;transform:translateX(-50%);width:min(240px,62vw);padding:4px 9px 6px}.rm.rm-ph .h,.rm.rm-ph .z,.rm.rm-ph .n,.rm.rm-ph .beat{display:none}.rm.rm-ph .b{margin-top:0;height:11px}
       .rm .z{display:flex;gap:3px;margin-top:4px}.rm .z span{flex:1;height:4px;border-radius:2px;background:#e6dccb}.rm .z span.on{background:#1f1a17}`;
     el.appendChild(style);
     this.meters = [];
@@ -498,12 +501,24 @@ export class Sprint {
     humans.forEach((ru, k) => {
       const d = document.createElement('div');
       d.className = 'rm';
-      d.style.bottom = `${(ru.c.type === 'touch' ? 120 : 12) + k * 58}px`;
+      d.style.bottom = `${(ru.ph ? 70 : ru.c.type === 'touch' ? 120 : 12) + k * 58}px`;
+      if (ru.ph) { d.classList.add('rm-ph'); this.hint = new PhoneHint(this.ctx); this.hintFor = ru; }
       const keys = '';
       d.innerHTML = `<div class="h"><img src="${ru.c.flag}" alt=""><span>${ru.c.short}</span><span class="k">${keys}</span></div><div class="b"><i></i><u></u></div><div class="z"><span></span><span></span><span></span></div><span class="n">♪</span>`;
       el.appendChild(d);
       this.meters.push({ ru, d, bar: d.querySelector('.b i'), note: d.querySelector('.n'), tip: d.querySelector('.k'), zones: d.querySelectorAll('.z span'), k: '', tipText: '' });
     });
+  }
+
+  // Phone mode: no blocks to hold and no pacing zones. Wait for the whistle, then both thumbs as fast
+  // as they go: the tapping speed itself is the running speed.
+  fitPhone(ru) { fitMash(ru.rhythm, ru.c); }
+  phoneScheme() { return 'halves'; }
+  phoneHint(ru) {
+    const P = this.phase;
+    if (P === 'walk' || P === 'marks' || P === 'set' || P === 'false') return ['wait', 'Wait for the whistle'];
+    if ((P === 'race' || P === 'finishing') && !ru.finished) return ['tap2', 'Both thumbs, fast!', 'go'];
+    return [''];
   }
 
   // ---------------------------------------------------------------- flow
@@ -516,6 +531,7 @@ export class Sprint {
     this.falseStarts = 0;
     this.ctx.sound.setLoop('crowd', 0.35);
     for (const ru of this.runners) ru.c.pad.clear?.();
+    this.ctx.gest?.scheme(this.phoneScheme());
   }
 
   makeRhythm() { return new Rhythm({ target: this.target }); }
@@ -523,7 +539,7 @@ export class Sprint {
   // the start call tells humans to hold their action key in the blocks
   marksText() {
     const humans = this.runners.filter((ru) => ru.c.human && !helped(ru.c));
-    if (!humans.length) return 'On your marks';
+    if (!humans.length || humans.every((ru) => ru.ph)) return 'On your marks';
     return `On your marks · hold ${humans.every((ru) => ru.c.type === 'touch') ? '●' : 'action'}`;
   }
 
@@ -560,8 +576,9 @@ export class Sprint {
         const q = ctx.presses(i);
         if (ru.c.human && helped(ru.c)) continue;   // Little players start by themselves
         // holding ACTION in the blocks is fine; letting go of it, or a step, before the whistle is not
-        for (const e of q) if (e.b === 'action' && e.down) ru.block = true;
-        const jumped = q.some((e) => (e.down && e.b !== 'action') || (!e.down && e.b === 'action' && ru.block));
+        // (a phone player has no blocks to hold: any touch before the whistle is a false start)
+        for (const e of q) if (e.b === 'action' && e.down && !ru.ph) ru.block = true;
+        const jumped = q.some((e) => (e.down && (e.b !== 'action' || ru.ph)) || (!e.down && e.b === 'action' && ru.block));
         if (jumped && !ru.heldBack) { this.falseStart(ru); if (this.phase !== 'set') return; }
       }
       if (this.t >= this.whistleIn) this.go(now);
@@ -603,6 +620,7 @@ export class Sprint {
     this.whistleAt = now;
     this.setMessage('GO!', 'big', '#ffc93c', 0.9);
     ctx.sound.whistle(0.5);
+    ctx.buzz('go');
     for (const ru of this.runners) {
       ru.tGo = now + (ru.heldBack ? 0.5 : 0);
       ru.autoGo = ru.c.human && helped(ru.c) ? ru.tGo + 0.3 : null;
@@ -622,7 +640,7 @@ export class Sprint {
       const ru = this.runners[i];
       // which part of the race this runner is in
       const zone0 = ru.zone;
-      ru.zone = !this.zones ? 'top' : ru.x < DRIVE_X ? 'drive' : ru.x < FATIGUE_X ? 'top' : 'tired';
+      ru.zone = !this.zones || ru.ph ? 'top' : ru.x < DRIVE_X ? 'drive' : ru.x < FATIGUE_X ? 'top' : 'tired';
       if (ru.c.human && ru.zone !== zone0 && ru.started && this.zones) ctx.hud.flash(`${ru.c.short}: ${ru.zone === 'top' ? 'steady beat now' : 'dig in: a bit faster!'}`, ru.zone === 'top' ? '#ffc93c' : '#ff8a65');
       ru.rhythm.target = this.target * (ru.zone === 'drive' ? DRIVE_TARGET : ru.zone === 'tired' ? FATIGUE_TARGET : 1);
       if (ru.bot && !ru.finished) {
@@ -645,13 +663,22 @@ export class Sprint {
             ru.v *= this.vmax / VMAX;
             if (ru.c.human && ru.reaction < 0.2) ctx.hud.flash(`${ru.c.short}: flying start!`, '#7be495');
           }
+          else if (e.down && ru.ph && !ru.started) {
+            // phone: the first touch after the whistle is the push-off
+            ru.started = true; ru.reaction = e.t - this.whistleAt; ru.startT = e.t; ru.v = blockBoost(ru.reaction) * this.vmax / VMAX;
+            ctx.sound.step(1, this.pan(ru.x));
+            if (ru.reaction < 0.2) ctx.hud.flash(`${ru.c.short}: flying start!`, '#7be495');
+          }
           else if (e.down && ru.started && !ru.finished) this.onAction?.(ru, e.t);
           continue;
         }
         if (!e.down) continue;
         if (ru.finished && ru.v < 4) continue;
         const res = ru.rhythm.press(e.b, e.t);
-        if (!ru.started) { ru.started = true; ru.reaction = e.t - this.whistleAt; ru.startT = e.t; ru.block = false; }
+        if (!ru.started) {
+          ru.started = true; ru.reaction = e.t - this.whistleAt; ru.startT = e.t; ru.block = false;
+          if (ru.ph) { ru.v = blockBoost(ru.reaction) * this.vmax / VMAX; if (ru.reaction < 0.2) ctx.hud.flash(`${ru.c.short}: flying start!`, '#7be495'); }
+        }
         if (res === 'stumble') {
           ru.v *= 0.85; ru.stumbleT = 0.35;
           ctx.sound.stumble(this.pan(ru.x));
@@ -662,7 +689,7 @@ export class Sprint {
         }
       }
       // speed
-      let eff = ru.started ? ru.rhythm.effort(now) : 0;
+      let eff = ru.started ? (ru.autoEff ?? ru.rhythm.effort(now)) : 0;
       if (ru.started && !ru.finished) {
         const x = ru.rhythm.ratio(now), sl = winFor(ru.c, 0.15);
         // the drive: legs spinning too fast slip on the floorboards (a smaller player has more room)
@@ -733,6 +760,7 @@ export class Sprint {
       ctx.sound.cheer(1);
       this.phase = 'finishing';
     }
+    if (ru.ph) ctx.buzz(place === 0 ? 'good' : 'tap');
     if (ru.c.human || place === 0) ctx.hud.flash(`${ru.c.short} ${ru.time.toFixed(2)} s`, place === 0 ? '#ffc93c' : '#ffffff');
   }
 
@@ -894,7 +922,7 @@ export class Sprint {
       const e = m.ru.started && !m.ru.finished ? clamp(m.ru.effort / 1.04, 0, 1) : 0;
       m.bar.style.width = `${(e * 100).toFixed(1)}%`;
       const ru = m.ru, fast = ru.started && ru.zone === 'drive' && ru.over > 1 + winFor(ru.c, 0.15);
-      const k = fast ? 'rm fast' : e >= 0.92 ? 'rm go' : e >= 0.7 ? 'rm ok' : 'rm';
+      const k = (fast ? 'rm fast' : e >= 0.92 ? 'rm go' : e >= 0.7 ? 'rm ok' : 'rm') + (ru.ph ? ' rm-ph' : '');
       if (k !== m.k) { m.d.className = k; m.k = k; }
       const touch = ru.c.type === 'touch';
       const ph = this.phase;
@@ -908,6 +936,7 @@ export class Sprint {
       m.note.classList.toggle('on', m.ru.beat > 0);
       m.d.style.opacity = this.phase === 'attract' || this.phase === 'done' || this.phase === 'replay' ? '0' : '1';
     }
+    if (this.hint) this.hint.set(...this.phoneHint(this.hintFor));
   }
 
   applyCamera(dt, snap = null) {
@@ -1003,6 +1032,11 @@ export default {
   how: [
     { verb: 'Timing', text: 'In the blocks, hold <b>action</b>. Let go the moment the <b>whistle</b> blows for a flying start: letting go after <b>Set</b> is a false start.' },
     { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn to run. Out of the blocks, smooth steps: legs spinning too fast slip. Then a steady, quick beat, and dig in a little faster for the last stretch.' },
+  ],
+  // phone mode (one touch player, gestures): the whole how-to
+  phoneHow: [
+    { g: 'wait', text: 'Thumbs off the glass until the <b>whistle</b>.' },
+    { g: 'tap2', text: 'Then tap with <b>both thumbs</b>, as fast as you can.' },
   ],
   helpers: {
     little: 'You start by yourself on the whistle. Then tap <b>any button</b> on a slow, steady beat: the bar goes green.',

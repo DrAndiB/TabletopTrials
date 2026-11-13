@@ -243,7 +243,12 @@ class Halfpipe {
     if (rd.bot) rd.bot.go = 0.6 + rd.bot.r() * 0.6;
     else this.skipper.update(false, false);
     this.ctx.competitors.forEach((c, i) => this.ctx.hud.chip(i, this.riders[i].runs.length ? `${this.riders[i].best}` : '', i === rd.i ? 'active' : ''));
-    if (rd.c.human) this.ctx.hud.message(`${rd.c.short}: tap ${rd.c.type === 'touch' ? '●' : 'action'} to drop in`, 'small', '#fff');
+    // Phone mode: a tap drops in and pumps at the bottom; in the air, drag a finger sideways to spin
+    // that way and down to grab, and lift it before landing.
+    this.ph = !!rd.c.phone && !helped(rd.c);
+    this.ctx.gest?.scheme('tap');
+    if (rd.c.human && this.ph) this.ctx.hud.message('Tap to drop in', 'small', '#fff');
+    else if (rd.c.human) this.ctx.hud.message(`${rd.c.short}: tap ${rd.c.type === 'touch' ? '●' : 'action'} to drop in`, 'small', '#fff');
     else this.ctx.hud.message('');
     this.updateCard();
   }
@@ -338,6 +343,7 @@ class Halfpipe {
         s.E = Math.min(EMAX, s.E + PUMP * (0.4 + 0.6 * qual));
         if (rd.c.human) s.note = { text: qual > 0.7 ? 'great pump!' : 'pump', col: qual > 0.7 ? '#7be495' : '#fff1d6', t: 0 };
         ctx.sound.thump(0.25);
+        if (this.ph) ctx.buzz(qual > 0.7 ? 'good' : 'tap');
       }
       this.slide(dt);
     }
@@ -396,11 +402,13 @@ class Halfpipe {
     const s = this.rs;
     const h = s.E - H, vUp = Math.sqrt(2 * G * h);
     s.air = { t: 0, T: (2 * vUp) / G, vUp, side: Math.sign(s.q), goal: 0, spun: 0, spinDir: 0, grabT: 0, grabbing: false, lastGrab: -1, h };
+    if (this.ph) this.ctx.gest.scheme('stick', { dead: 20 });
     this.ctx.sound.whoosh(0.5);
   }
 
   landAir() {
     const s = this.rs, a = s.air, rd = this.cur, ctx = this.ctx;
+    if (this.ph) ctx.gest.scheme('tap');
     s.air = null; s.dir = -a.side; s.q = a.side * (QL - 0.01);
     const left = (a.goal - a.spun) * 360 + (a.spinning ? 45 : 0);  // degrees still to turn (still holding: more)
     const late = a.lastGrab >= 0 ? a.T - a.lastGrab : 9;           // time since the grab was let go
@@ -411,6 +419,7 @@ class Halfpipe {
     const { name, pts } = this.airPoints(a.h, Math.round(a.spun * 2), a.grabT, quality, s.airs);
     if (quality === 'crash') { s.crashT = 1.3; s.crashSpin = 0; ctx.sound.thump(0.6); ctx.sound.aww(); this.particles.emit(s.x, H * 0.8, a.side * (ZL - 2), { vx: 0, spread: 6, up: 4, color: 0xffffff, size: 0.9, life: 0.6, alpha: 0.7, grav: 14, n: 18 }); } else ctx.sound.thump(0.3);
     if (rd.c.human) s.note = { text: quality === 'crash' ? (left > 70 ? 'wipe-out: spin not finished' : 'wipe-out: still grabbing') : quality === 'sketchy' ? 'sketchy landing' : 'clean landing!', col: quality === 'clean' ? '#7be495' : quality === 'sketchy' ? '#ffc93c' : '#ff8a65', t: 0 };
+    if (this.ph) ctx.buzz(quality === 'crash' ? 'bad' : quality === 'clean' ? 'good' : 'thump');
     s.airs.push({ name, pts, quality });
     s.score += pts;
     const col = quality === 'clean' ? '#7be495' : quality === 'sketchy' ? '#ffc93c' : '#ff8a65';
@@ -570,6 +579,15 @@ class Halfpipe {
         : ph === 'ready' ? `tap ${act} to drop in` : s.air ? `hold ${lr} to spin, let go to stop · hold ${act}: grab · let go of both before landing` : `tap ${act} as you cross the blue strip at the bottom to pump higher`);
       this.guide.bar('en', clamp((s.E - H * 0.7) / (EMAX - H * 0.7), 0, 1), { go: s.E > H + 6, mark: (H - H * 0.7) / (EMAX - H * 0.7), hide: ph === 'ready' });
     }
+    const hint = this.tags.kit?.hint;
+    if (hint) {
+      if (!show || !this.ph || (s && s.out)) hint.set('');
+      else if (ph === 'ready') hint.set('tap', 'Tap to drop in', 'go');
+      else if (s.air) {
+        const a = s.air, close = a.T - a.t < 0.4 && (a.goal - a.spun > 0.05 || a.spinning || a.grabbing);
+        hint.set(close ? 'release' : 'slide', close ? 'Let go!' : 'Drag sideways: spin · down: grab', close ? 'warn' : '');
+      } else hint.set('tap', s.crashT > 0 ? '' : 'Tap on the blue strip: pump');
+    }
     if (!rd || !s || !rd.c.human || ph !== 'ride' || s.out) { this.tags.hide('hp'); return; }
     if (s.note) s.note.t += 1 / 60;
     const note = s.note && s.note.t < 1.0 ? `<span class="pill" style="--tc:${s.note.col}">${s.note.text}</span><br>` : '';
@@ -606,7 +624,7 @@ class Halfpipe {
       if (s.out) { const k = clamp(s.out.t / 1.6, 0, 1); want.yaw = Math.PI / 2 - 0.1 - 0.7 * k; want.width = 92 - 22 * k; want.y = H * 0.3 + ry * 0.4; want.z = -6 * k; }
     } else want = { x: X0, y: H, z: -ZL - 8, yaw: Math.PI / 2 + 0.6, pitch: 0.3, width: 80 };
     for (const k of Object.keys(want)) c[k] = dt >= 1 ? want[k] : damp(c[k], want[k], 3, Math.min(dt, 0.1));
-    R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: Math.max(180, c.width * 1.6) });
+    R.orbit(c.x, c.y, c.z, { yaw: c.yaw, pitch: c.pitch, width: c.width, shadowSpan: Math.max(180, c.width * 1.6), full: true });
     R.setFocus(0.5, 0.36, 0.7);
   }
 
@@ -637,6 +655,11 @@ export default {
     { verb: 'Timing', text: 'Tap <b>action</b> to drop in, then tap it each time you cross the <b>blue strip</b> at the bottom to pump: higher every time.' },
     { verb: 'Steer', text: 'In the air, <b>hold left</b> or <b>right</b> to spin; let go and the half turn finishes by itself. Hold <b>action</b> to grab. The label over you says how much more spin still fits.' },
     { verb: 'Timing', text: 'Land with the spin finished and the grab let go, or it\'s a wipe-out. Mix your tricks: the judges like variety. Two runs.' },
+  ],
+  // phone mode (one touch player, gestures): the whole how-to
+  phoneHow: [
+    { g: 'tap', text: 'Tap to drop in, and tap each time you cross the <b>blue strip</b> to pump.' },
+    { g: 'slide', text: 'In the air, <b>drag sideways</b> to spin and <b>down</b> to grab. Lift your finger before you land.' },
   ],
   helpers: {
     little: 'You <b>pump by yourself</b>. In the air, hold <b>any button</b> to spin, and let go before you land.',

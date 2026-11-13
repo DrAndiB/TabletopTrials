@@ -584,7 +584,9 @@ class SkiJump {
   buildHud() {
     const el = this.ctx.hud.el;
     // watching a computer jumper: action fast-forwards
-    this.skipper = new Skipper(this.ctx, hudKit(this.ctx));
+    const hk = hudKit(this.ctx);
+    this.hint = hk.hint;
+    this.skipper = new Skipper(this.ctx, hk);
     const style = document.createElement('style');
     style.textContent = `.sj-card{position:absolute;left:12px;top:12px;width:min(250px,40vw);background:rgba(255,244,220,.95);border:3px solid #1f1a17;border-radius:14px;box-shadow:0 3px 0 #1f1a17;padding:8px 10px;font:700 12px/1.25 Rubik,sans-serif;color:#1f1a17}
       .sj-card .who{display:flex;align-items:center;gap:7px;font:400 18px/1.1 "Lilita One",Impact,sans-serif}.sj-card .who img{height:20px;width:30px;object-fit:cover;border:2px solid #1f1a17;border-radius:3px}
@@ -593,6 +595,7 @@ class SkiJump {
       .sj-card li{display:grid;grid-template-columns:28px 22px 1fr auto;gap:5px;align-items:center;font-variant-numeric:tabular-nums}.sj-card li img{height:13px;width:20px;object-fit:cover;border-radius:2px}
       .sj-card li.me{background:#ffc93c;border-radius:6px}
       .sj-gauge{position:absolute;left:50%;bottom:calc(18px + var(--tb,0px));transform:translateX(-50%);width:min(400px,84vw);background:rgba(255,244,220,.95);border:3px solid #1f1a17;border-radius:14px;box-shadow:0 3px 0 #1f1a17;padding:6px 12px 8px;font:800 12px/1.2 Rubik,sans-serif;color:#1f1a17;text-align:center}
+      .sj-gauge.sj-ph.sj-inrun .lab,.sj-gauge.sj-ph.sj-inrun .g{display:none}
       .sj-gauge .lab{display:flex;justify-content:space-between;color:#4a413a;font-weight:700}.sj-gauge .lab b{color:#1f1a17}
       .sj-gauge .g{position:relative;height:18px;border:2px solid #1f1a17;border-radius:99px;background:linear-gradient(90deg,#f6b3a8,#fff3c4 34%,#bfe6c7 42%,#bfe6c7 58%,#fff3c4 66%,#f6b3a8);margin-top:4px}
       .sj-gauge .g i{position:absolute;top:-5px;bottom:-5px;width:6px;margin-left:-3px;left:50%;background:#1f1a17;border-radius:3px}
@@ -621,7 +624,8 @@ class SkiJump {
     s.style.right = `${(P.JUMP_ZONE / P.INRUN_LEN) * 100}%`; s.style.width = `${((P.ARMED - P.JUMP_ZONE) / P.INRUN_LEN) * 100}%`;
     this.hudScore = mk('sj-score sj-hidden', '<div class="cards"></div><div class="sum"></div><div class="skip"></div>');
     this.hudWind = mk('sj-wind sj-hidden', '');
-    if (this.ctx.competitors.some((c) => c.type === 'touch')) { this.hudGauge.style.setProperty('--tb', '110px'); this.hudScore.style.setProperty('--tb', '110px'); }
+    if (this.ctx.competitors.some((c) => c.type === 'touch')) { const tb = this.ctx.phone ? '58px' : '110px'; this.hudGauge.style.setProperty('--tb', tb); this.hudScore.style.setProperty('--tb', tb); }
+    if (this.ctx.phone) this.hudGauge.classList.add('sj-ph');
   }
 
   // ---------------------------------------------------------------- computer jumpers
@@ -710,7 +714,9 @@ class SkiJump {
     const zw = Math.min(P.ARMED - 2, winFor(j.c, P.JUMP_ZONE)), gp = this.hudGauge.querySelector('.p');
     gp.querySelector('u').style.width = `${(zw / P.INRUN_LEN) * 100}%`;
     Object.assign(gp.querySelector('s').style, { right: `${(zw / P.INRUN_LEN) * 100}%`, width: `${((P.ARMED - zw) / P.INRUN_LEN) * 100}%` });
-    if (j.c.human) this.ctx.hud.message(`Tap ${helped(j.c) ? 'any button' : j.c.type === 'touch' ? '●' : 'your action key'} to go!`, 'small', '#fff');
+    this.ctx.gest?.scheme('tap');
+    if (j.c.human && j.c.phone) this.ctx.hud.message('Tap to go!', 'small', '#fff');
+    else if (j.c.human) this.ctx.hud.message(`Tap ${helped(j.c) ? 'any button' : j.c.type === 'touch' ? '●' : 'your action key'} to go!`, 'small', '#fff');
     else this.ctx.hud.message('');
     this.updateCard();
   }
@@ -752,8 +758,14 @@ class SkiJump {
     const held = ctx.held(j.i);
     // Little jumpers: any button is the tap, and the balance and the landing look after themselves;
     // Kids get a steadying hand on the balance
-    const little = j.c.human && helped(j.c), assist = little ? 2.2 : j.c.human && helped(j.c, 1) ? 0.5 : 0;
-    let steer = little ? 0 : (held.right ? 1 : 0) - (held.left ? 1 : 0);
+    // Phone mode: the balance on the way down looks after itself (the one trick there is the jump);
+    // in the air a thumb on the glass slides up to lean forward and down to lean back, and lifting it
+    // (or a tap) just before touchdown is the telemark.
+    const ph = !!j.c.phone && !helped(j.c), g = ph ? ctx.gest : null;
+    const little = j.c.human && helped(j.c);
+    let assist = little ? 2.2 : j.c.human && helped(j.c, 1) ? 0.5 : 0;
+    if (ph && this.phase === 'inrun') assist = 1.6;
+    let steer = little || (ph && this.phase === 'inrun') ? 0 : ph ? (j.c.pad.ax ?? 0) : (held.right ? 1 : 0) - (held.left ? 1 : 0);
     const tapped = q.some((e) => e.down && (e.b === 'action' || little));
 
     if (this.phase === 'gate') {
@@ -782,7 +794,14 @@ class SkiJump {
       const f = this.flight, real = f.t / P.FLIGHT.timeScale;
       // a late tap still gets a little hop
       if (this.lateHop && tapped && real < 0.18) { f.vy += P.TAKEOFF.pop * 0.4; this.lateHop = false; }
-      else if (this.landPress == null && !little && tapped && real > 0.3) this.landPress = { tc: this.timeToContact() };
+      else if (this.landPress == null && !little && !ph && tapped && real > 0.3) this.landPress = { tc: this.timeToContact() };
+      if (ph) {
+        const rel = g.take(), tc = this.timeToContact();
+        if (g.down && !this.wasDown && real > 0.3 && tc < 0.6 && this.landPress == null) this.landPress = { tc };
+        else if (rel && real > 0.3 && tc < 1.0 && this.landPress == null) this.landPress = { tc };
+        if (this.landPress && !this.landBuzz) { this.landBuzz = true; ctx.buzz('tap'); }
+        this.wasDown = g.down;
+      }
       if (little && this.landPress == null && real > 0.3 && this.timeToContact() <= 0.2) this.landPress = { tc: this.timeToContact() };
       if (assist) steer = clamp(steer - (f.lean + f.lv * 0.12) * assist, -1, 1);
       const gust = P.gustAt(real, this.gusts);
@@ -821,6 +840,7 @@ class SkiJump {
     this.flight = { x: p.x, y: p.y + 0.05, vx: st.v * Math.cos(p.ang), vy: st.v * Math.sin(p.ang) + P.TAKEOFF.pop * q, lean: (this.r() - 0.5) * 0.1, lv: 0, t: 0, leanSum: 0, n: 0, q, vEdge: st.v };
     this.lateHop = this.tap == null;
     this.phase = 'flight'; this.t = 0;
+    if (this.cur.c.phone && !helped(this.cur.c)) { ctx.gest.scheme('none', { steer: { axis: 'y', range: 60 } }); this.wasDown = ctx.gest.down; this.landBuzz = false; ctx.buzz('thump'); }
     ctx.sound.whoosh(1);
     if (q >= 0.95) ctx.hud.flash('Perfect take-off!', '#7be495');
     else if (this.tap == null) ctx.hud.flash('Late!', '#ff8a65');
@@ -829,6 +849,7 @@ class SkiJump {
 
   touchdown(now) {
     const ctx = this.ctx, f = this.flight, j = this.cur;
+    if (j.c.phone) { ctx.gest.scheme('tap'); ctx.buzz('thump'); }
     const x = f.x, slope = P.hillSlope(x);
     const vn = Math.abs((f.vy - slope * f.vx) / Math.hypot(1, slope));
     const metres = P.roundHalf(P.metresAt(Math.min(x, P.HILL_END + 30)));
@@ -1030,10 +1051,20 @@ class SkiJump {
       const v = flying ? this.flight.lean : this.inrun.wobble;
       const d = P.INRUN_LEN - this.inrun.s;
       const tapKey = helped(j.c) ? 'any button' : j.c.type === 'touch' ? '●' : 'action';
+      const pm = !!j.c.phone && !helped(j.c);
+      this.hudGauge.classList.toggle('sj-inrun', pm && !flying);
+      if (this.hint) {
+        if (!pm) this.hint.set('');
+        else if (ph === 'gate') this.hint.set('tap', 'Tap to go', 'go');
+        else if (ph === 'inrun') this.hint.set('tap', this.tap != null ? 'Jump!' : 'Tap in the green: jump!', d <= P.ARMED && this.tap == null ? 'go' : '');
+        else if (this.landPress) this.hint.set('');
+        else if (this.timeToContact() < 0.7) this.hint.set('release', 'Lift your thumb: land!', 'go');
+        else this.hint.set('slidev', warn ? (warn.amp > 0 ? 'Gust! Slide down' : 'Gust! Slide up') : 'Thumb down, slide to lean', warn ? 'warn' : '');
+      }
       this.hudGauge.querySelector('.lab b').textContent = flying ? (helped(j.c) ? 'Flying!' : 'Lean into the wind')
         : ph === 'gate' ? `Tap ${tapKey} to go` : this.tap != null ? 'Jump!' : d <= P.ARMED + 6 ? `Tap ${tapKey} in the green!` : helped(j.c) ? 'Get ready to jump…' : 'Keep your balance';
       const lab = this.hudGauge.querySelectorAll('.lab span');
-      lab[0].textContent = flying ? '◀ back' : '◀ left'; lab[1].textContent = flying ? 'forward ▶' : 'right ▶';
+      lab[0].textContent = flying ? (pm ? '▼ back' : '◀ back') : '◀ left'; lab[1].textContent = flying ? (pm ? 'forward ▲' : 'forward ▶') : 'right ▶';
       this.gaugeV = this.gaugeV == null ? v : this.gaugeV + (v - this.gaugeV) * 0.3;
       this.hudGauge.querySelector('.g i').style.left = `${clamp(50 + this.gaugeV * 42, 2, 98)}%`;
       // the arrows show which way to push for an announced gust
@@ -1055,7 +1086,7 @@ class SkiJump {
     if (windOn) {
       const w = !!warn;
       this.hudWind.classList.toggle('warn', w);
-      this.hudWind.textContent = w ? (warn.amp > 0 ? 'Gust! ◀ lean back' : 'Gust! lean forward ▶') : `Fan ${'≋'.repeat(1 + Math.round(clamp(Math.abs(this.gust), 0, 1) * 2))}`;
+      this.hudWind.textContent = w ? (j && j.c.phone ? (warn.amp > 0 ? 'Gust! lean back ▼' : 'Gust! lean forward ▲') : warn.amp > 0 ? 'Gust! ◀ lean back' : 'Gust! lean forward ▶') : `Fan ${'≋'.repeat(1 + Math.round(clamp(Math.abs(this.gust), 0, 1) * 2))}`;
     }
   }
 
@@ -1115,6 +1146,11 @@ export default {
     { verb: 'Timing', text: 'Tap <b>action</b> to push off. On the ruler, tap <b>action</b> again in the <b>green zone</b> to jump.' },
     { verb: 'Steer', text: 'On the way down, <b>left</b> and <b>right</b> keep you balanced: a steady tuck is a fast tuck. In the air, <b>right</b> leans forward and <b>left</b> leans back. Gusts from the fan are announced: lean against them.' },
     { verb: 'Timing', text: 'When it says <b>LAND!</b>, tap <b>action</b> just before you touch down for a telemark and top style marks.' },
+  ],
+  // phone mode (one touch player, gestures): the whole how-to
+  phoneHow: [
+    { g: 'tap', text: 'Tap to go, and tap again in the <b>green zone</b> to jump.' },
+    { g: 'slidev', text: 'In the air, keep a thumb down and <b>slide up or down</b> to lean against the gusts. <b>Lift</b> it just before touchdown to land.' },
   ],
   helpers: {
     little: 'Tap <b>any button</b> to go, then once more in the <b>green</b> to jump. Your balance and the landing look after themselves.',

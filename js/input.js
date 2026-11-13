@@ -23,18 +23,20 @@ export class Pad {
     this.held = { left: false, right: false, action: false };
     this.queue = [];      // {b: 'left'|'right'|'action', down: bool, t}
     this.lastDown = { left: -1, right: -1, action: -1 };
+    this.ax = null;       // analog steering -1..1 from a gesture (null: steer by the held buttons)
   }
-  push(b, down, t = now()) {
+  // p: how strong the press was (0..1), for swipe strokes; plain buttons leave it out
+  push(b, down, t = now(), p = undefined) {
     if (this.held[b] === down) return;
     this.held[b] = down;
     if (down) this.lastDown[b] = t;
-    this.queue.push({ b, down, t });
+    this.queue.push(p === undefined ? { b, down, t } : { b, down, t, p });
     if (this.queue.length > 64) this.queue.shift();
   }
   // take all queued events (oldest first)
   drain() { const q = this.queue; this.queue = []; return q; }
   clear() { this.queue = []; for (const b of BUTTONS) this.held[b] = false; }
-  get steer() { return (this.held.right ? 1 : 0) - (this.held.left ? 1 : 0); }
+  get steer() { return this.ax != null ? this.ax : (this.held.right ? 1 : 0) - (this.held.left ? 1 : 0); }
 }
 
 export class Input {

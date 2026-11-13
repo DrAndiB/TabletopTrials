@@ -14,6 +14,8 @@ export class Rhythm {
     this.hold = 1.5;          // a gap this many beats long before the beat starts to fade (longer for little hands)
     this.slack = 0.32;        // how uneven the taps may get before it costs anything
     this.any = false;         // Little players: any button is the next step, no need to alternate
+    this.mash = null;         // phone sprinting: { ref, pow, cap }: tapping speed itself is the effort (see effort())
+    this.swipe = false;       // phone strokes: every press carries a strength, long swipes pull harder
     this.reset();
   }
   reset() {
@@ -22,9 +24,11 @@ export class Rhythm {
     this.intervals = [];
     this.strides = 0;
     this.stumbles = 0;
+    this.pow = 1;             // running strength of the last few strokes (swipes)
   }
   // -> 'first' | 'stride' | 'stumble'
-  press(side, t) {
+  press(side, t, p = 1) {
+    this.pow += (p - this.pow) * 0.4;
     if (this.any && this.last === side) side = side === 'left' ? 'right' : 'left';
     if (this.last === side) { this.stumbles++; this.lastStumble = t; return 'stumble'; }
     const first = this.last === null || t - this.lastT > 1.2;
@@ -66,7 +70,10 @@ export class Rhythm {
   // 0..1.04: share of full running effort
   effort(t) {
     const x = this.ratio(t);
+    // two thumbs on glass: the faster the taps, the faster the legs, with a soft ceiling
+    if (this.mash) return Math.min(this.mash.cap, Math.pow(Math.max(0, this.cadence(t)) / this.mash.ref, this.mash.pow)) * this.top;
     let e = x <= 1 ? x : 1 + 0.04 * (1 - Math.exp(-(x - 1) * 5));
+    if (this.swipe) e *= 0.7 + 0.3 * clamp(this.pow, 0, 1);
     // only really erratic tapping costs anything; normal keyboard and touch jitter does not
     e *= 1 - clamp((this.unsteadiness() - this.slack) * 0.8, 0, 0.25);
     return e * this.top;

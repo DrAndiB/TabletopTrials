@@ -11,7 +11,8 @@ import { Figurine, POSES, blendPose, REST } from '../figurine.js';
 import { banner } from '../props.js';
 import { Rhythm, BotTapper } from '../verbs.js';
 import { Particles } from '../fx.js';
-import { fitRhythm, winFor, helped, sizeOf } from '../sizes.js';
+import { fitRhythm, winFor, helped, sizeOf, phone } from '../sizes.js';
+import { PhoneHint } from './common.js';
 import { clamp, damp, rng, makeNoise2D } from '../util.js';
 import { paneWindow, nightSky, penguinCrowd, Fireplace } from '../venues.js';
 
@@ -52,6 +53,9 @@ const TARGET_Z = HZ - 52;      // the shoebox of caps
 const PEN = { x: 26, z: 46, r: 9 };          // the penalty loop, in the infield after the range
 const PEN_LEN = 2 * Math.PI * PEN.r;
 const T_FLAT = 5.5, T_CLIMB = 7.5;
+// Phone mode: a thumb on the glass skis hard, lifting it skis easy (the heart calms down); the tuck looks
+// after itself. At the range, drag the sight onto the cap and lift to shoot. The laps go by a bit quicker.
+const PH_HARD = 0.97, PH_EASY = 0.55, PH_PACE = 1.25, PH_SIGHT = 23;
 const V_FLAT = 34, V_CLIMB = 18, V_TUCK = 48, V_UP = 32;
 const ORD = ['1st', '2nd', '3rd', '4th'];
 const BOT = {
@@ -137,9 +141,10 @@ class Biathlon {
         rhythm: fitRhythm(new Rhythm({ target: T_FLAT }), c), little: c.human && helped(c), kid: c.human && helped(c, 1), anim: this.r(), state: 'race', crashT: 0, tuck: false,
         visit: 0, shots: [], visitShots: [], aim: { x: 0, y: 0, t: 0 }, pen: 0, penS: 0, finished: false, time: null, mat: i,
         bot: c.human ? null : { tap: new BotTapper(c.pad, rng(c.seed * 11 + 1)), next: 0 },
-        botTuck: this.r(), botStand: this.r(), idle: this.r() * 10, crashes: 0,
+        botTuck: this.r(), botStand: this.r(), idle: this.r() * 10, crashes: 0, ph: phone(c) && !helped(c),
       });
     });
+    this.pace = this.ctx.phone ? PH_PACE : 1;
     this.buildHud();
     this.placeAll(true);
     this.applyCamera(1);
@@ -353,6 +358,8 @@ class Biathlon {
       .bi-m .shoot b.hit{background:#fff}.bi-m .shoot b.miss{background:#1f1a17;outline:3px solid #e23b2e}
       .bi-m .shoot u{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;border:3px solid #e23b2e;border-radius:50%;box-shadow:0 0 0 1px #fff}
       .bi-m .shoot u:before,.bi-m .shoot u:after{content:"";position:absolute;background:#e23b2e;left:50%;top:-8px;bottom:-8px;width:2px;margin-left:-1px}.bi-m .shoot u:after{top:50%;bottom:auto;left:-8px;right:-8px;width:auto;height:2px;margin:-1px 0 0}
+      .bi-m.bi-ph{left:50%;transform:translateX(-50%);width:min(360px,92vw)}.bi-m.bi-ph .shoot{height:84px}.bi-m.bi-ph .h img{height:14px;width:21px}
+      .bi-card.bi-ph{display:none !important}
       .bi-card{position:absolute;right:12px;top:64px;width:min(210px,36vw);background:rgba(255,244,220,.95);border:3px solid #1f1a17;border-radius:14px;box-shadow:0 3px 0 #1f1a17;padding:6px 10px;font:700 12px/1.3 Rubik,sans-serif;color:#1f1a17}
       .bi-card li{display:grid;grid-template-columns:26px 20px 1fr auto;gap:4px;align-items:center;list-style:none}.bi-card ol{margin:0;padding:0}.bi-card img{height:12px;width:18px;object-fit:cover;border-radius:2px}`;
     el.appendChild(style);
@@ -361,7 +368,8 @@ class Biathlon {
     humans.forEach((sk, k) => {
       const d = document.createElement('div');
       d.className = 'bi-m';
-      d.style.bottom = `${(sk.c.type === 'touch' ? 120 : 12) + k * 92}px`;
+      d.style.bottom = `${(sk.ph ? 70 : sk.c.type === 'touch' ? 120 : 12) + k * 92}px`;
+      if (sk.ph) { this.hint = new PhoneHint(this.ctx); this.hintFor = sk; }
       d.innerHTML = `<div class="h"><img src="${sk.c.flag}" alt=""><span>${sk.c.short}</span><span class="k"></span></div>
         <div class="row"><span>Push</span><div class="bar ef"><i></i></div></div><div class="row"><span>Heart</span><div class="bar hr"><i></i></div></div>
         <div class="shoot">${Array.from({ length: SHOTS }, (_, i) => `<b style="left:${10 + i * 20}%"></b>`).join('')}<u></u></div>`;
@@ -369,7 +377,7 @@ class Biathlon {
       this.meters.push({ sk, d, lap: d.querySelector('.k'), ef: d.querySelector('.ef i'), hr: d.querySelector('.hr i'), caps: d.querySelectorAll('.shoot b'), sight: d.querySelector('.shoot u'), lapText: '', cls: '' });
     });
     this.card = document.createElement('div');
-    this.card.className = 'bi-card';
+    this.card.className = 'bi-card' + (this.ctx.phone ? ' bi-ph' : '');
     this.card.innerHTML = '<ol></ol>';
     el.appendChild(this.card);
   }
@@ -382,6 +390,7 @@ class Biathlon {
     this.ctx.sound.setLoop('crowd', 0.35);
     this.ctx.hud.message('Ready…', 'small', '#fff');
     for (const sk of this.skiers) sk.c.pad.clear?.();
+    this.ctx.gest?.scheme('tap', { buzz: false });
   }
 
   // which part of the loop is at s (for tests)
@@ -439,15 +448,17 @@ class Biathlon {
       for (const e of q) if (e.down && (e.b !== 'action' || sk.little)) { const res = sk.rhythm.press(e.b, e.t); if (res === 'stumble') sk.v *= 0.9; }
       sk.rhythm.target = uphill ? T_CLIMB : T_FLAT;
       let eff = sk.rhythm.effort(now);
-      const x = sk.rhythm.ratio(now), w = winFor(sk.c, 1);
+      let x = sk.rhythm.ratio(now);
+      const w = winFor(sk.c, 1);
+      if (sk.ph) { eff = (held.action ? PH_HARD : PH_EASY) * sk.rhythm.top; x = held.action ? 1 : PH_EASY; sk.pushing = held.action; }
       // a player still out there well after the winner: the skis carry them home
       const late = sk.c.human && this.firstFinish != null ? now - this.firstFinish - 10 : 0;
       if (late > 0) { eff = Math.max(eff, Math.min(0.85, 0.45 + late * 0.05)); sk.carried = true; }
       // tuck: only does anything on the way down (and on the flat run-out after it, where it's a mistake)
       const wasTucked = sk.tuck;
       // Little skiers tuck and stand up by themselves; Kids stand up by themselves
-      const want = sk.bot ? (glide && sk.botTuck < B.tuck) || (kind === 'runout' && sk.botTuck < B.tuck && sk.botStand >= B.stand) : sk.little || late > 0 ? glide : held.action;
-      sk.tuck = want && (glide || (kind === 'runout' && !sk.kid && !(late > 0)));
+      const want = sk.bot ? (glide && sk.botTuck < B.tuck) || (kind === 'runout' && sk.botTuck < B.tuck && sk.botStand >= B.stand) : sk.little || sk.ph || late > 0 ? glide : held.action;
+      sk.tuck = want && (glide || (kind === 'runout' && !sk.kid && !sk.ph && !(late > 0)));
       // heart rate: up with effort, a lot uphill; down in a tuck
       let hrT, rate;
       if (uphill) { hrT = 0.62 + 0.33 * eff + 0.9 * Math.max(0, x - 1 - 0.2 * w); rate = 0.7; }
@@ -469,7 +480,7 @@ class Biathlon {
         if (wasTucked) this.crash(sk);
       }
       if (kind !== 'curve' && kind !== 'runout') { sk.curveChecked = false; if (sk.bot && !glide) { sk.botTuck = this.r(); sk.botStand = this.r(); } }
-      const ds = sk.v * dt;
+      const ds = sk.v * dt * this.pace;
       if (sk.state === 'pen') {
         sk.penS += ds;
         if (sk.penS >= sk.pen * PEN_LEN) { sk.state = 'race'; sk.s = Math.max(sk.s, RANGE_OUT + 2); sk.pen = 0; sk.blend = 0.6; }
@@ -495,6 +506,7 @@ class Biathlon {
         if (sk.c.human && !sk.little) ctx.hud.flash(sk.hr > 0.68 ? `${sk.c.short}: heart racing! wait a moment for a steadier sight` : `${sk.c.short}: nice and calm: shoot!`, sk.hr > 0.68 ? '#ff8a65' : '#7be495');
         // the sight comes up somewhere off the caps and keeps drifting
         sk.aim = { x: 0, y: 0, t: this.r() * 10, nudge: (this.r() < 0.5 ? -1 : 1) * (1.1 + this.r() * 0.9), drift: 0 };
+        if (sk.ph) { ctx.gest.scheme('none'); ctx.gest.take(); sk.aim.needLift = ctx.gest.down; sk.aim.gdx = 0; sk.aim.gid = null; }
         sk.aim.t0 = sk.aim.t;
         sk.bot?.tap.stop();
         if (sk.bot) sk.bot.next = now + B.aimT[0] + this.r.gauss() * B.aimT[1] * 0.5;
@@ -516,6 +528,15 @@ class Biathlon {
       const late = a.t - a.t0 > 6;
       let fire = q.some((e) => (e.b === 'action' || sk.little) && e.down) || late;
       let forced = late ? false : null;
+      if (sk.ph) {
+        // the finger moves the sight as if it were under it; lifting the finger is the shot
+        const g = ctx.gest, rel = g.take();
+        if (a.needLift) { if (!g.down) a.needLift = false; }
+        else {
+          if (g.down) { if (a.gid !== g.t0) { a.gid = g.t0; a.gdx = 0; } a.nudge = clamp(a.nudge + (g.dx - a.gdx) / PH_SIGHT, -2.6, 2.6); a.gdx = g.dx; a.x = A * (0.8 * Math.sin(1.3 * a.t) + 0.35 * Math.sin(3.1 * a.t + 1)) + a.nudge; }
+          if (rel) fire = true;
+        }
+      }
       if (sk.bot && now >= sk.bot.next) {
         fire = true;
         forced = this.r() < B.hit - Math.max(0, sk.hr - 0.5) * 0.4;
@@ -546,6 +567,7 @@ class Biathlon {
     const hit = forced != null ? forced : Math.hypot(a.x, a.y) < 0.5 * (1 + (sizeOf(sk.c).win - 1) * 0.35);
     sk.visitShots.push(hit); sk.shots.push(hit);
     ctx.sound.pop();
+    if (sk.ph) ctx.buzz(hit ? 'good' : 'thump');
     const t = this.targets[sk.mat][k];
     if (hit) { t.flip = 0; ctx.sound.clack(0); this.particles.emit(t.cap.position.x, t.cap.position.y + 1, t.cap.position.z, { vx: 0, spread: 2, up: 2, color: 0xffffff, size: 0.5, life: 0.35, alpha: 0.7, grav: 6, n: 6 }); }
     // the next cap: the sight wanders off again
@@ -555,6 +577,7 @@ class Biathlon {
       sk.pen = sk.visitShots.filter((h) => !h).length;
       sk.visit++;
       sk.state = 'leaveRange'; sk.v = 4;
+      if (sk.ph) ctx.gest.scheme('tap', { buzz: false });
       if (sk.c.human) ctx.hud.flash(sk.pen ? `${sk.c.short}: ${SHOTS - sk.pen}/${SHOTS}` : `${sk.c.short}: clean shooting!`, sk.pen ? '#ffffff' : '#7be495');
     }
   }
@@ -562,6 +585,7 @@ class Biathlon {
   crash(sk) {
     sk.state = 'crash'; sk.crashT = 1.6; sk.crashes++;
     this.ctx.sound.puff(); this.ctx.sound.aww();
+    if (sk.ph) this.ctx.buzz('bad');
     const p = trackAt(sk.s, sk.off);
     this.particles.emit(p.x, 2, p.z, { vx: 0, spread: 8, up: 6, color: 0xffffff, size: 2.4, life: 1.0, alpha: 0.7, grav: 6, grow: 1.6, n: 30 });
     if (sk.c.human) this.ctx.hud.flash(`${sk.c.short}: into the cotton wool!`, '#ff8a65');
@@ -706,10 +730,19 @@ class Biathlon {
     this.skiers.forEach((s, i) => ctx.hud.chip(i, this.phase === 'race' || this.phase === 'done' ? (s.finished ? `${ORD[s.place]} · ${s.time.toFixed(1)}` : `${ORD[order.indexOf(s)]}${s.state === 'pen' ? ' · loop' : s.state === 'shoot' || s.state === 'toRange' ? ' · range' : ''}`) : '', s.finished && s.place === 0 ? 'active' : ''));
     this.card.style.display = this.phase === 'race' ? '' : 'none';
     this.card.querySelector('ol').innerHTML = order.map((s, k) => `<li><span>${ORD[k]}</span><img src="${s.c.flag}" alt=""><span>${s.c.short}</span><b>${s.finished ? s.time.toFixed(1) : `lap ${Math.min(LAPS, s.lap + 1)}`}</b></li>`).join('');
+    if (this.hint) {
+      const sk = this.hintFor, kind = sk.state === 'pen' ? 'flat' : trackAt(sk.s).kind;
+      if (this.phase !== 'race' || sk.finished) this.hint.set('');
+      else if (sk.state === 'shoot') this.hint.set(sk.aim.needLift ? 'wait' : 'drag', sk.aim.needLift ? 'Lift your thumb…' : 'Drag the sight, lift: shoot', sk.hr > 0.68 ? 'warn' : '');
+      else if (sk.state !== 'race' && sk.state !== 'pen') this.hint.set('');
+      else if (kind === 'descent') this.hint.set('wait', 'Tucked: get your breath');
+      else if (sk.hr > 0.9) this.hint.set('release', 'Heart racing: ease off!', 'warn');
+      else this.hint.set('hold', sk.pushing ? 'Pushing hard' : 'Hold to push, lift to rest', sk.pushing ? 'go' : '');
+    }
     for (const m of this.meters) {
       const sk = m.sk;
       const range = sk.state === 'shoot';
-      const cls = range ? 'bi-m range' : 'bi-m';
+      const cls = (range ? 'bi-m range' : 'bi-m') + (sk.ph ? ' bi-ph' : '');
       if (cls !== m.cls) { m.d.className = cls; m.cls = cls; }
       const lap = sk.finished ? 'finished!' : `lap ${Math.min(LAPS, sk.lap + 1)}/${LAPS}`;
       if (lap !== m.lapText) { m.lap.textContent = lap; m.lapText = lap; }
@@ -770,6 +803,11 @@ export default {
     { verb: 'Rhythm', text: 'Skate with <b>left</b>, <b>right</b> in turn: an easy beat on the flat, a faster, harder one up the cushion (your heart rate climbs too).' },
     { verb: 'Power', text: 'Downhill, <b>hold action</b> to tuck: faster, and your heart calms down. Let go before the curve at the bottom, or into the cotton wool you go.' },
     { verb: 'Timing', text: 'After laps 1 and 2 you turn off to the range: <b>left/right</b> bring the drifting sight onto each cap, <b>action</b> shoots. It sways more when your heart is racing. Each miss is a penalty loop. After lap 3, straight on to the finish.' },
+  ],
+  // phone mode (one touch player, gestures): the whole how-to
+  phoneHow: [
+    { g: 'hold', text: '<b>Hold</b> a thumb down to ski hard, lift it to ski easy and calm your heart. The tuck does itself.' },
+    { g: 'drag', text: 'At the range, <b>drag</b> the sight onto each cap and <b>lift</b> to shoot. A racing heart makes it sway.' },
   ],
   helpers: {
     little: 'Tap <b>any button</b> on a steady beat to ski: you <b>tuck</b> and <b>stand up by yourself</b>. At the range the sight comes back by itself: tap when it\'s on the cap.',

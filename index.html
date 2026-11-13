@@ -73,6 +73,18 @@
           <div class="opt-row"><span>Computer kids</span>
             <div class="seg"><button data-opt="skill" data-val="easy">Easy</button><button data-opt="skill" data-val="normal">Normal</button><button data-opt="skill" data-val="hard">Hard</button></div>
           </div>
+          <div class="opt-row touch-only"><span>One touch player</span>
+            <div class="seg"><button data-opt="controls" data-val="gestures">Gestures</button><button data-opt="controls" data-val="pads">Buttons</button></div>
+          </div>
+          <div class="opt-row"><span>Computer turns</span>
+            <div class="seg"><button data-opt="skipcpu" data-val="off">Watch</button><button data-opt="skipcpu" data-val="on">Fast-forward</button></div>
+          </div>
+          <div class="opt-row touch-only"><span>Vibration</span>
+            <div class="seg"><button data-opt="haptics" data-val="on">On</button><button data-opt="haptics" data-val="off">Off</button></div>
+          </div>
+          <div class="opt-row app-only"><span>Screen</span>
+            <div class="seg"><button data-opt="orient" data-val="auto">Auto</button><button data-opt="orient" data-val="portrait">Portrait</button><button data-opt="orient" data-val="landscape">Landscape</button></div>
+          </div>
           <div class="opt-row"><span>Graphics</span>
             <div class="seg"><button data-opt="quality" data-val="auto">Auto</button><button data-opt="quality" data-val="low">Low</button><button data-opt="quality" data-val="medium">Medium</button><button data-opt="quality" data-val="high">High</button></div>
           </div>
@@ -152,6 +164,7 @@
     <h2 id="results-title">Luxembourg wins!</h2>
     <div class="podium" id="podium"></div>
     <ol id="results-list" class="results-list"></ol>
+    <p id="results-record" class="results-record"></p>
     <div id="medal-table" class="medal-table" hidden></div>
     <div class="stack row">
       <button id="btn-next" class="btn big yellow">Next event <kbd>Enter</kbd></button>
@@ -175,6 +188,7 @@
   <div id="confetti" aria-hidden="true"></div>
 </section>
 
+<div id="gest"></div>
 <div id="touch"></div>
 
 <script type="module" src="js/main.js"></script>

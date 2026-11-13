@@ -8,7 +8,7 @@ import { Figurine, POSES, REST, blendPose } from '../figurine.js';
 import { banner } from '../props.js';
 import { paneWindow, nightSky, FairyLights, gingerCrowd, Cat } from '../venues.js';
 import { Rhythm, BotTapper } from '../verbs.js';
-import { fitRhythm, winFor, helped } from '../sizes.js';
+import { fitRhythm, winFor, helped, phone } from '../sizes.js';
 import { Particles, SkidMarks } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
 import { hudKit, Guide, Tags, RaceStart, fmtTime, beatGauge, ORD } from './common.js';
@@ -18,6 +18,7 @@ const R0 = 20, LANE = 4.2;     // inner radius of the bends, lane width
 const LAP = 300, LAPS = 2;     // progress units per lap (the same for every lane), laps
 const START_P = 8;             // the start line, a little way down the front straight
 const TARGET = 3.6, VMAX = 30, ACCEL = 1.25;
+const TARGET_PH = 2.4;         // phone: long swipes down the straights
 const Y = 2.2;                 // the ice surface
 // computer skaters: cadence share, how late they lean in / stand up (s)
 const BOT = {
@@ -96,6 +97,10 @@ class SpeedSkating {
         rhythm: fitRhythm(new Rhythm({ target: TARGET }), c), little: c.human && helped(c), effort: 0, laps: 0,
         bot: c.human ? null : { tap: new BotTapper(c.pad, rng(c.seed * 29 + 11)) },
       });
+      // Phone mode: long swipes down the straights; in the bends rest a thumb on the glass to lean in
+      // (the speed carries through), and lift it at the exit.
+      const s = this.skaters[this.skaters.length - 1];
+      if (phone(c)) { s.ph = true; s.holdT = 0; s.carry = 0; s.rhythm.target = TARGET_PH; s.rhythm.any = true; s.rhythm.swipe = true; s.rhythm.top *= 0.97; }
     });
     const kit = hudKit(this.ctx);
     this.guide = new Guide(kit, [{ key: 'sp', label: 'Speed' }]);
@@ -257,6 +262,7 @@ class SpeedSkating {
     this.startCtl = new RaceStart(this.ctx, this.skaters);
     this.phase = 'marks'; this.t = 0;
     this.ctx.hud.message(this.startCtl.marksText(), 'small', '#fff');
+    this.ctx.gest?.scheme('stroke', { hold: true });
   }
 
   // where along the lane a skater is, and whether it's a bend there
@@ -297,11 +303,21 @@ class SpeedSkating {
     for (const e of evs) {
       if (!e.down) continue;
       if (e.b === 'action' && !s.little) { s.lean = !s.lean; if (s.c.human) ctx.sound.pop(); continue; }
-      const res = s.rhythm.press(e.b, e.t);
+      const res = s.rhythm.press(e.b, e.t, e.p ?? 1);
       if (res === 'stumble') { s.v *= 0.88; ctx.sound.stumble(); } else if (s.c.human) ctx.sound.step(0.3);
       s.push = 0.2; s.pushSide = e.b;
     }
     const pt = this.at(s), bend = pt.bend > 0;
+    if (s.ph && !s.little) {
+      // a thumb resting on the glass leans in; lifting it stands up again, ready for the next stroke
+      const g = ctx.gest;
+      s.holdT = g.down && g.travel < 16 ? s.holdT + dt : 0;
+      const lean = s.holdT > 0.12;
+      if (lean !== s.lean) {
+        s.lean = lean; ctx.sound.pop(); ctx.buzz('tap');
+        if (lean) s.carry = Math.max(0.62, s.effort); else s.rhythm.lastT = now;
+      }
+    }
     // Little skaters lean into the bends by themselves
     if (s.little && s.lean !== bend) { s.lean = bend; ctx.sound.pop(); }
     // a steady, long stroke is fastest; thrashing just spins the blades
@@ -311,6 +327,8 @@ class SpeedSkating {
     const first = this.skaters.find((o) => o.finished && o.place === 0);
     const late = s.c.human ? (first ? now - this.startCtl.whistleAt - first.time - 6 : now - this.startCtl.whistleAt - 45) : 0;
     if (late > 0) { eff = Math.max(eff, Math.min(0.8, 0.4 + late * 0.06)); s.glided = true; if (s.lean !== bend) s.lean = bend; }
+    // (phone) leaning carries the speed through the bend; on a straight it fades
+    if (s.ph && s.lean) { if (!bend) s.carry = Math.max(0.4, s.carry - 0.3 * dt); eff = Math.max(late > 0 ? eff : 0, s.carry); }
     s.effort = eff;
     if (bend && !s.lean) { s.wide = Math.min(1, s.wide + dt * 1.6 / winFor(s.c, 1)); s.notes.wide += dt; } else s.wide = Math.max(0, s.wide - dt * 1.2);
     if (!bend && s.lean) s.notes.straight += dt;
@@ -436,13 +454,26 @@ class SpeedSkating {
       const e = clamp(h.v / VMAX, 0, 1);
       this.guide.bar('sp', e, { go: e > 0.9, hide: ph === 'marks' });
     }
+    const hp = this.guide.phone && humans[0], hint = this.tags.kit?.hint;
+    if (hint) {
+      const go = this.startCtl?.phase === 'go';
+      if (!hp || ph === 'done' || ph === 'pre' || hp.finished) hint.set('');
+      else if (!hp.started) hint.set(go ? 'swipe2' : 'wait', go ? 'Swipe to go!' : 'Wait for the whistle', go ? 'go' : '');
+      else {
+        const bendNow = this.at(hp).bend > 0, soon = this.bendAhead(hp, 12) > 0;
+        if (bendNow || soon) hint.set('hold', hp.lean ? 'Hold through the bend' : 'Hold: lean in!', hp.lean ? '' : 'warn');
+        else if (hp.lean) hint.set('release', 'Let go!', 'warn');
+        else hint.set('swipe2', 'Long swipes, one by one');
+      }
+    }
     for (const s of this.skaters) {
       const key = 'k' + s.i;
       if (!s.c.human || ph === 'done' || ph === 'pre' || !s.started) { this.tags.hide(key); continue; }
       if (s.finished) { this.tags.set(key, `<span class="pill big" style="--tc:${s.place === 0 ? '#ffc93c' : '#fff1d6'}">${ORD[s.place]} · ${fmtTime(s.time)}</span>`); } else {
         const bendNow = this.at(s).bend > 0, soon = this.bendAhead(s, 16) > 0;
         const blink = Math.sin(tt * 12) > 0;
-        const pill = s.little ? (s.lean ? '<span class="pill" style="--tc:#7be495">leaning in</span><br>' : '') : bendNow && !s.lean ? `<span class="pill big" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">lean in! (${this.ctx.competitors[s.i].type === 'touch' ? '●' : 'action'})</span><br>`
+        const pill = s.ph ? (bendNow && !s.lean ? `<span class="pill big" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">hold!</span><br>` : !bendNow && s.lean && !soon ? `<span class="pill big" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">let go!</span><br>` : s.lean ? '<span class="pill" style="--tc:#7be495">leaning in</span><br>' : '')
+          : s.little ? (s.lean ? '<span class="pill" style="--tc:#7be495">leaning in</span><br>' : '') : bendNow && !s.lean ? `<span class="pill big" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">lean in! (${this.ctx.competitors[s.i].type === 'touch' ? '●' : 'action'})</span><br>`
           : !bendNow && s.lean && !soon ? `<span class="pill big" style="--tc:${blink ? '#ff8a65' : '#ffc93c'}">stand up! (${this.ctx.competitors[s.i].type === 'touch' ? '●' : 'action'})</span><br>`
             : soon && !s.lean ? '<span class="pill" style="--tc:#fff1d6">bend ahead</span><br>'
               : s.lean ? '<span class="pill" style="--tc:#7be495">leaning in</span><br>' : '';
@@ -508,6 +539,11 @@ export default {
     { verb: 'Timing', text: 'On the line, <b>hold action</b> and let go on the whistle.' },
     { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn: long, steady strokes beat fast ones.' },
     { verb: 'Timing', text: 'Tap <b>action</b> at the sweets to lean into a bend, and <b>action</b> again after it to stand up. Not leaning sends you wide and slow.' },
+  ],
+  // phone mode (one touch player, gestures): the whole how-to
+  phoneHow: [
+    { g: 'swipe2', text: 'Down the straights: long <b>swipes</b>, one after the other.' },
+    { g: 'hold', text: 'In the bends: <b>rest a thumb</b> on the glass to lean in, and lift it at the exit.' },
   ],
   helpers: {
     little: 'You push off and <b>lean into the bends by yourself</b>. Just tap <b>any button</b> on a slow, steady beat.',

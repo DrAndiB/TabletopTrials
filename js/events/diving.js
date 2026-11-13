@@ -268,6 +268,7 @@ class Diving {
     if (d.bot) this.planBot(d);
     this.ctx.competitors.forEach((c, i) => this.ctx.hud.chip(i, this.divers[i].scores.length ? `${this.divers[i].total.toFixed(1)}` : '', i === d.i ? 'active' : ''));
     this.ctx.hud.message(`${d.c.short}: ${this.called.name}`, 'small', '#fff', 2.2);
+    this.ctx.gest?.scheme('tap');
     this.updateCard();
   }
 
@@ -314,8 +315,15 @@ class Diving {
       const held = ctx.held(d.i), little = d.c.human && helped(d.c);
       // a Little diver tucks with any button
       v.tucked = (held.action || (little && (held.left || held.right))) && v.flightT > 0.08;
+      // Phone mode: a finger resting on the glass tucks and spins, lifting it stretches out; a sideways
+      // swipe while stretched out is a half twist.
+      const g = d.c.phone && !little ? ctx.gest : null;
+      if (g) {
+        v.tucked = g.down && g.travel < 20 && v.flightT > 0.08;
+        if (g.down && Math.abs(g.dx) > 32 && v.swiped !== g.t0) { v.swiped = g.t0; v.twistGoal += 0.5; v.twistDir = g.dx < 0 ? -1 : 1; ctx.buzz('tap'); }
+      }
       if (v.tucked) v.wasTucked = true;
-      if (!little) for (const e of q) if (e.down && e.b !== 'action' && !v.tucked) { v.twistGoal += 0.5; v.twistDir = e.b === 'left' ? -1 : 1; }
+      if (!little && !g) for (const e of q) if (e.down && e.b !== 'action' && !v.tucked) { v.twistGoal += 0.5; v.twistDir = e.b === 'left' ? -1 : 1; }
       v.flightT += dt;
       v.theta += (v.tucked ? W_TUCK : W_OPEN) * dt;
       if (v.twist < v.twistGoal) v.twist = Math.min(v.twistGoal, v.twist + TWIST_RATE * dt);
@@ -375,6 +383,7 @@ class Diving {
     // how it went, shown next to the board: great, or early (before the feet land) / late (after)
     v.last = { q, word: q > 0.75 ? 'great!' : q > 0.4 ? (u > 0.5 ? 'a bit early' : 'a bit late') : (u > 0.5 ? 'early' : 'late'), t: 0 };
     ctx.sound.pop();
+    if (this.cur.c.phone) ctx.buzz(q > 0.75 ? 'good' : 'tap');
     if (v.q.length >= BOUNCES) this.takeoff(q);
   }
 
@@ -389,10 +398,12 @@ class Diving {
     this.phase = 'flight'; this.t = 0;
     ctx.sound.whoosh(0.6);
     this.boardKick = 1;
+    if (this.cur.c.phone && !helped(this.cur.c)) { ctx.gest.scheme('none'); ctx.buzz('thump'); }
   }
 
   entry() {
     const v = this.dv, d = this.cur, ctx = this.ctx;
+    if (d.c.phone) { ctx.gest.scheme('tap'); ctx.buzz('thump'); }
     // how far from head-down and straight; tucked at the water is a cannonball
     const err = Math.abs(wrapPi(v.theta - Math.PI));
     const twistLeft = v.twistGoal - v.twist;
@@ -554,6 +565,14 @@ class Diving {
         : ph === 'bounce' ? `tap ${a} as the ring closes (feet on the board): ${BOUNCES} bounces, the last one takes off`
           : `hold ${a} to tuck and spin · let go when the dial is green${this.called.tw ? ` · then tap ${touch ? '◀ ▶' : 'left/right'} twice to twist` : ` · ${touch ? '◀ ▶' : 'left/right'}: twist`}`);
     }
+    const hint = this.tags.kit?.hint;
+    if (hint) {
+      if (!show || !d.c.phone || helped(d.c)) hint.set('');
+      else if (ph === 'ready') hint.set('tap', 'Tap to bounce', 'go');
+      else if (ph === 'bounce') hint.set('tap', 'Tap as the ring closes');
+      else if (v.wasTucked && !v.tucked && this.called.tw && v.twistGoal < this.called.tw) hint.set('slide', 'Swipe sideways: twist!', 'go');
+      else hint.set(v.tucked ? 'release' : 'hold', v.tucked ? 'Let go when the dial is green' : 'Hold to tuck and spin');
+    }
     // the bounce ring: it closes on the green circle as the feet meet the board
     if (d && v && d.c.human && (ph === 'bounce' || (ph === 'ready' && this.t > 0.2))) {
       const len = HOP_T * (0.7 + 0.3 * v.amp), u = ph === 'bounce' ? v.hopT / len : 1;
@@ -621,6 +640,11 @@ export default {
     { verb: 'Timing', text: 'Tap <b>action</b> to start bouncing, then tap as the ring closes and your feet touch the board. Three bounces: the third takes off, higher if they were on time.' },
     { verb: 'Power', text: '<b>Hold action</b> to tuck and spin, let go to stretch out. The dial next to you turns <b>green</b> when stretching out now gets you in head first.' },
     { verb: 'Steer', text: 'Stretched out, tap <b>left</b> or <b>right</b> for half twists. Dive 1 is 1½ somersaults, dive 2 adds a twist, dive 3 is your choice: a different dive from the one called scores half.' },
+  ],
+  // phone mode (one touch player, gestures): the whole how-to
+  phoneHow: [
+    { g: 'tap', text: 'Tap as the ring closes, three times: the third bounce takes off.' },
+    { g: 'hold', text: '<b>Hold</b> to tuck and spin, <b>let go</b> when the dial turns green. A sideways <b>swipe</b> adds a half twist.' },
   ],
   helpers: {
     little: 'You <b>bounce by yourself</b>. In the air, hold <b>any button</b> to spin and let go when the dial turns <b>green</b>. No twists needed.',

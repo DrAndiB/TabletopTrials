@@ -6,7 +6,7 @@ import { Figurine, POSES, REST, blendPose } from '../figurine.js';
 import { banner } from '../props.js';
 import { Caustics, sunbeams, paneWindow, daySky, duckCrowd } from '../venues.js';
 import { Rhythm, BotTapper } from '../verbs.js';
-import { fitRhythm, winFor, helped } from '../sizes.js';
+import { fitRhythm, winFor, helped, phone } from '../sizes.js';
 import { Particles } from '../fx.js';
 import { clamp, damp, rng, makeNoise2D, TAU } from '../util.js';
 import { hudKit, Guide, Tags, RaceStart, fmtTime, beatGauge, ORD } from './common.js';
@@ -15,6 +15,7 @@ const L = 150, W = 50, T = 5;          // the tub inside: length, width; wall th
 const RIM = 40, WY = 33, FLOOR = 8;      // rim top, water surface, tub floor
 const LANE_W = W / 4;
 const TARGET = 5.0, VMAX = 12.6, ACCEL = 2.2;
+const TARGET_PH = 2.5;                 // phone: long swipes, one for each arm stroke
 const TURN_ZONE = [L - 17, L - 4];     // tap ACTION over the green tiles for a tumble turn
 const BODY = 7.6;                      // head to toes, lying in the water
 const DRAIN = [0.06, 0.1];             // air used per second: resting, plus at full effort (a breath every ~6 s)
@@ -79,6 +80,10 @@ class Swimming {
         rhythm: fitRhythm(new Rhythm({ target: TARGET }), c), little: c.human && helped(c), autoTurn: c.human && helped(c, 1), effort: 0, anim: this.r(), finished: false, time: null, notes: [],
         bot: c.human ? null : { tap: new BotTapper(c.pad, rng(c.seed * 31 + 7)), next: 0 },
       });
+      // Phone mode: every swipe is an arm stroke, the longer the stronger; skip a stroke to breathe; the
+      // tumble turn looks after itself.
+      const s = this.swimmers[this.swimmers.length - 1];
+      if (phone(c)) { s.ph = true; s.autoTurn = true; s.rhythm.target = TARGET_PH; s.rhythm.any = true; s.rhythm.swipe = true; }
     });
     this.place();
     const kit = hudKit(this.ctx);
@@ -291,6 +296,7 @@ class Swimming {
     this.phase = 'marks'; this.t = 0;
     this.ctx.hud.message(this.startCtl.marksText(), 'small', '#fff');
     this.ctx.sound.block(false);
+    this.ctx.gest?.scheme('stroke');
   }
 
   // ---------------------------------------------------------------- per step
@@ -349,9 +355,16 @@ class Swimming {
         continue;
       }
       if (s.turn || s.gaspT > 0) continue;
-      const res = s.rhythm.press(e.b, e.t);
+      // (phone) the stroke skipped for a breath doesn't count against the beat
+      if (s.paused) { const m = s.rhythm.mean(); if (isFinite(m)) s.rhythm.lastT = e.t - m; }
+      const res = s.rhythm.press(e.b, e.t, e.p ?? 1);
       if (res === 'stumble') { s.v *= 0.9; this.splash(s.x, s.z, 4); } else if (s.c.human) ctx.sound.step(0.25);
-      s.stroked = 0.12;
+      s.stroked = 0.12; s.paused = false;
+    }
+    // phone: a skipped stroke is a breath
+    if (s.ph && !s.turn && !s.paused && s.air < 0.85 && s.rhythm.strides > 2) {
+      const m = s.rhythm.mean();
+      if (now - s.rhythm.lastT > Math.max(0.45, (isFinite(m) ? m : 0.4) * 1.4)) { s.paused = true; this.breathe(s, now); }
     }
     if (s.turn) { this.stepTurn(s, dt); return; }
     // air runs out faster the harder you swim; with no air left you splutter and slow right down
@@ -361,7 +374,7 @@ class Swimming {
     if (s.paddle) eff = Math.max(eff, s.paddle);
     s.effort = eff;
     s.air = Math.max(0, s.air - (DRAIN[0] + DRAIN[1] * eff) * dt);
-    if (s.air <= 0 && s.gaspT <= 0) { s.gaspT = 1.2; s.air = 0.55; s.notes.push('gasp'); ctx.hud.flash(`${s.c.short}: out of air!`, '#ff8a65'); this.splash(s.x, s.z, 10); }
+    if (s.air <= 0 && s.gaspT <= 0) { if (s.ph) ctx.buzz('bad'); s.gaspT = 1.2; s.air = 0.55; s.notes.push('gasp'); ctx.hud.flash(`${s.c.short}: out of air!`, '#ff8a65'); this.splash(s.x, s.z, 10); }
     if (s.breathT >= 0) { s.breathT += dt; if (s.breathT > BREATH_T) s.breathT = -1; }
     let target = VMAX * Math.min(1.04, eff);
     if (s.breathT >= 0) target *= 0.84;
@@ -389,6 +402,7 @@ class Swimming {
       s.turn = null; s.lap = 1; s.air = Math.max(s.air, tr.tumble ? 0.75 : 1);
       s.v = VMAX * (tr.tumble ? 1.12 : 0.45); s.glide = tr.tumble ? 0.45 : 0.15;
       if (s.c.human) this.tagFlash(s, tr.tumble ? 'tumble turn!' : 'slow touch turn', tr.tumble ? '#7be495' : '#ff8a65');
+      if (s.ph) { this.ctx.buzz('tap'); s.rhythm.lastT = this.ctx.time(); }
     }
   }
 
@@ -543,6 +557,13 @@ class Swimming {
           : h.lap === 0 && h.x > TURN_ZONE[0] - 30 ? (h.autoTurn ? 'you turn by yourself at the green tiles' : `tap ${a} over the green tiles: tumble turn!`)
           : `tap ${lr} in turn to swim · ${a} to breathe`);
     }
+    const hp = this.guide.phone && humans[0], hint = this.tags.kit?.hint;
+    if (hint) {
+      if (!hp || ph === 'done' || ph === 'pre' || hp.finished) hint.set('');
+      else if (ph === 'marks' || !hp.swimming) hint.set(hp.started ? 'wait' : this.startCtl.phase === 'go' ? 'swipe2' : 'wait', hp.started ? '' : this.startCtl.phase === 'go' ? 'Swipe to dive!' : 'Wait for the whistle', this.startCtl.phase === 'go' && !hp.started ? 'go' : '');
+      else if (hp.air < 0.3 && hp.breathT < 0) hint.set('wait', 'Skip a stroke: breathe!', 'warn');
+      else hint.set('swipe2', 'Long swipes, one by one');
+    }
     // over each human swimmer: name, the stroke beat, the air left, and what to do next
     for (const s of this.swimmers) {
       const key = 's' + s.i;
@@ -620,6 +641,11 @@ export default {
     { verb: 'Timing', text: 'On the soap bar, <b>hold action</b>. Let go on the whistle. Too early and you wait.' },
     { verb: 'Rhythm', text: 'Tap <b>left</b> and <b>right</b> in turn for the arm strokes. Keep the beat needle over your swimmer in the green: steady beats fast.' },
     { verb: 'Timing', text: 'Tap <b>action</b> to breathe before your air runs out. Over the <b>green tiles</b> at the far end, tap <b>action</b> for a tumble turn.' },
+  ],
+  // phone mode (one touch player, gestures): the whole how-to
+  phoneHow: [
+    { g: 'swipe2', text: 'Every <b>swipe</b> is an arm stroke: long swipes, one after the other, on a steady beat.' },
+    { g: 'wait', text: 'Low on air? <b>Skip a stroke</b> to breathe. The turn does itself.' },
   ],
   helpers: {
     little: 'You dive, <b>breathe</b> and <b>turn</b> by yourself. Just tap <b>any button</b> on a slow, steady beat to swim.',
